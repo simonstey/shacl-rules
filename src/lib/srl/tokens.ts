@@ -30,6 +30,9 @@ export const Symmetric = createToken({ name: 'Symmetric', pattern: /SYMMETRIC/i 
 export const Inverse = createToken({ name: 'Inverse', pattern: /INVERSE/i });
 export const Version = createToken({ name: 'Version', pattern: /VERSION/i });
 export const Imports = createToken({ name: 'Imports', pattern: /IMPORTS/i });
+export const Reflexive = createToken({ name: 'Reflexive', pattern: /REFLEXIVE/i });
+export const In = createToken({ name: 'In', pattern: /IN/i });
+export const Exists = createToken({ name: 'Exists', pattern: /EXISTS/i });
 
 // RDF Type
 export const RdfType = createToken({ name: 'RdfType', pattern: /a\b/ });
@@ -71,6 +74,7 @@ export const Percent = createToken({ name: 'Percent', pattern: /%/ });
 export const Ampersand = createToken({ name: 'Ampersand', pattern: /&&/ });
 export const DoublePipe = createToken({ name: 'DoublePipe', pattern: /\|\|/ });
 export const Bang = createToken({ name: 'Bang', pattern: /!/ });
+export const QuestionMark = createToken({ name: 'QuestionMark', pattern: /\?(?![a-zA-Z_])/ });
 
 // Variables
 export const QuestionVar = createToken({
@@ -189,6 +193,9 @@ export const allTokens = [
   Transitive,
   Symmetric,
   Inverse,
+  Reflexive,
+  In,
+  Exists,
   Version,
   Imports,
   True,
@@ -236,6 +243,7 @@ export const allTokens = [
   Slash,
   Percent,
   Bang,
+  QuestionMark,
   // Identifier last
   Identifier,
 ];

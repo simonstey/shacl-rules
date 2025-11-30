@@ -15,6 +15,9 @@ import {
   Transitive,
   Symmetric,
   Inverse,
+  Reflexive,
+  In,
+  Exists,
   Version,
   Imports,
   RdfType,
@@ -50,6 +53,7 @@ import {
   Ampersand,
   DoublePipe,
   Bang,
+  QuestionMark,
   QuestionVar,
   DollarVar,
   IRI,
@@ -153,7 +157,7 @@ export class SRLParser extends CstParser {
     this.SUBRULE(this.bodyPattern);
   });
 
-  // Declaration = 'TRANSITIVE' '(' iri ')' | 'SYMMETRIC' '(' iri ')' | 'INVERSE' '(' iri ',' iri ')'
+  // Declaration = 'TRANSITIVE' '(' iri ')' | 'SYMMETRIC' '(' iri ')' | 'INVERSE' '(' iri ',' iri ')' | 'REFLEXIVE' '(' iri ')'
   private declaration = this.RULE('declaration', () => {
     this.OR([
       {
@@ -180,6 +184,14 @@ export class SRLParser extends CstParser {
           this.CONSUME(Comma);
           this.SUBRULE4(this.iriRef);
           this.CONSUME3(RParen);
+        },
+      },
+      {
+        ALT: () => {
+          this.CONSUME(Reflexive);
+          this.CONSUME4(LParen);
+          this.SUBRULE5(this.iriRef);
+          this.CONSUME4(RParen);
         },
       },
     ]);
@@ -339,12 +351,102 @@ export class SRLParser extends CstParser {
     });
   });
 
-  // Verb = VarOrIRI | 'a'
+  // Verb = VarOrIRI | 'a' | PathExpression
   private verb = this.RULE('verb', () => {
     this.OR([
       { ALT: () => this.CONSUME(RdfType) },
+      { ALT: () => this.SUBRULE(this.pathExpression) },
+    ]);
+  });
+
+  // PathExpression = PathAlternative
+  private pathExpression = this.RULE('pathExpression', () => {
+    this.SUBRULE(this.pathAlternative);
+  });
+
+  // PathAlternative = PathSequence ( '|' PathSequence )*
+  private pathAlternative = this.RULE('pathAlternative', () => {
+    this.SUBRULE(this.pathSequence);
+    this.MANY(() => {
+      this.CONSUME(Pipe);
+      this.SUBRULE2(this.pathSequence);
+    });
+  });
+
+  // PathSequence = PathEltOrInverse ( '/' PathEltOrInverse )*
+  private pathSequence = this.RULE('pathSequence', () => {
+    this.SUBRULE(this.pathEltOrInverse);
+    this.MANY(() => {
+      this.CONSUME(Slash);
+      this.SUBRULE2(this.pathEltOrInverse);
+    });
+  });
+
+  // PathEltOrInverse = PathElt | '^' PathElt
+  private pathEltOrInverse = this.RULE('pathEltOrInverse', () => {
+    this.OPTION(() => this.CONSUME(Caret));
+    this.SUBRULE(this.pathElt);
+  });
+
+  // PathElt = PathPrimary PathMod?
+  private pathElt = this.RULE('pathElt', () => {
+    this.SUBRULE(this.pathPrimary);
+    this.OPTION(() => this.SUBRULE(this.pathMod));
+  });
+
+  // PathMod = '?' | '*' | '+'
+  private pathMod = this.RULE('pathMod', () => {
+    this.OR([
+      { ALT: () => this.CONSUME(QuestionMark) },
+      { ALT: () => this.CONSUME(Asterisk) },
+      { ALT: () => this.CONSUME(Plus) },
+    ]);
+  });
+
+  // PathPrimary = IRI | '(' PathExpression ')' | '!' PathNegatedPropertySet
+  private pathPrimary = this.RULE('pathPrimary', () => {
+    this.OR([
+      {
+        ALT: () => {
+          this.CONSUME(LParen);
+          this.SUBRULE(this.pathExpression);
+          this.CONSUME(RParen);
+        },
+      },
+      {
+        ALT: () => {
+          this.CONSUME(Bang);
+          this.SUBRULE(this.pathNegatedPropertySet);
+        },
+      },
       { ALT: () => this.SUBRULE(this.varOrIri) },
     ]);
+  });
+
+  // PathNegatedPropertySet = PathOneInPropertySet | '(' ( PathOneInPropertySet ( '|' PathOneInPropertySet )* )? ')'
+  private pathNegatedPropertySet = this.RULE('pathNegatedPropertySet', () => {
+    this.OR([
+      {
+        ALT: () => {
+          this.CONSUME(LParen);
+          this.OPTION(() => {
+            this.SUBRULE(this.pathOneInPropertySet);
+            this.MANY(() => {
+              this.CONSUME(Pipe);
+              this.SUBRULE2(this.pathOneInPropertySet);
+            });
+          });
+          this.CONSUME(RParen);
+        },
+      },
+      { ALT: () => this.SUBRULE3(this.pathOneInPropertySet) },
+    ]);
+  });
+
+  // PathOneInPropertySet = IRI | '^' IRI
+  private pathOneInPropertySet = this.RULE('pathOneInPropertySet', () => {
+    this.OPTION(() => this.CONSUME(Caret));
+    this.SUBRULE(this.iriRef);
   });
 
   // ObjectList = Object ( ',' Object )*
@@ -505,7 +607,7 @@ export class SRLParser extends CstParser {
     this.SUBRULE(this.relationalExpression);
   });
 
-  // RelationalExpression = NumericExpression ( '=' | '!=' | '<' | '>' | '<=' | '>=' ) NumericExpression )?
+  // RelationalExpression = NumericExpression ( '=' | '!=' | '<' | '>' | '<=' | '>=' ) NumericExpression )? | NumericExpression 'IN' ExpressionList | NumericExpression 'NOT' 'IN' ExpressionList
   private relationalExpression = this.RULE('relationalExpression', () => {
     this.SUBRULE(this.numericExpression);
     this.OPTION(() => {
@@ -544,6 +646,23 @@ export class SRLParser extends CstParser {
           ALT: () => {
             this.CONSUME(GreaterOrEqual);
             this.SUBRULE7(this.numericExpression);
+          },
+        },
+        {
+          ALT: () => {
+            this.CONSUME(In);
+            this.CONSUME(LParen);
+            this.OPTION2(() => this.SUBRULE(this.expressionList));
+            this.CONSUME(RParen);
+          },
+        },
+        {
+          ALT: () => {
+            this.CONSUME(Not);
+            this.CONSUME2(In);
+            this.CONSUME2(LParen);
+            this.OPTION3(() => this.SUBRULE2(this.expressionList));
+            this.CONSUME2(RParen);
           },
         },
       ]);
@@ -622,15 +741,34 @@ export class SRLParser extends CstParser {
     ]);
   });
 
-  // PrimaryExpression = BrackettedExpression | BuiltInCall | IRI | Literal | Var
+  // PrimaryExpression = BrackettedExpression | BuiltInCall | ExistsFunc | NotExistsFunc | IRI | Literal | Var
   private primaryExpression = this.RULE('primaryExpression', () => {
     this.OR([
+      { ALT: () => this.SUBRULE(this.existsFunc) },
+      { ALT: () => this.SUBRULE(this.notExistsFunc) },
       { ALT: () => this.SUBRULE(this.brackettedExpression) },
       { ALT: () => this.SUBRULE(this.builtInCall) },
       { ALT: () => this.SUBRULE(this.iriRef) },
       { ALT: () => this.SUBRULE(this.literal) },
       { ALT: () => this.SUBRULE(this.variable) },
     ]);
+  });
+
+  // ExistsFunc = 'EXISTS' GroupGraphPattern
+  private existsFunc = this.RULE('existsFunc', () => {
+    this.CONSUME(Exists);
+    this.CONSUME(LBrace);
+    this.SUBRULE(this.bodyPattern1);
+    this.CONSUME(RBrace);
+  });
+
+  // NotExistsFunc = 'NOT' 'EXISTS' GroupGraphPattern
+  private notExistsFunc = this.RULE('notExistsFunc', () => {
+    this.CONSUME(Not);
+    this.CONSUME(Exists);
+    this.CONSUME(LBrace);
+    this.SUBRULE(this.bodyPattern1);
+    this.CONSUME(RBrace);
   });
 
   // BrackettedExpression = '(' Expression ')'
@@ -725,6 +863,15 @@ const RULE_CATEGORIES: Record<string, GrammarRuleInfo['category']> = {
   triplesSameSubject: 'terms',
   predicateObjectList: 'terms',
   verb: 'terms',
+  pathExpression: 'terms',
+  pathAlternative: 'terms',
+  pathSequence: 'terms',
+  pathEltOrInverse: 'terms',
+  pathElt: 'terms',
+  pathMod: 'terms',
+  pathPrimary: 'terms',
+  pathNegatedPropertySet: 'terms',
+  pathOneInPropertySet: 'terms',
   objectList: 'terms',
   objectTerm: 'terms',
   reifiedTriple: 'terms',
@@ -749,6 +896,8 @@ const RULE_CATEGORIES: Record<string, GrammarRuleInfo['category']> = {
   multiplicativeExpression: 'expressions',
   unaryExpression: 'expressions',
   primaryExpression: 'expressions',
+  existsFunc: 'expressions',
+  notExistsFunc: 'expressions',
   brackettedExpression: 'expressions',
   builtInCall: 'expressions',
   expressionList: 'expressions',

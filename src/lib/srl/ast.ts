@@ -34,7 +34,7 @@ export interface VariableTerm {
 
 export interface TriplePattern {
   subject: RDFTerm;
-  predicate: RDFTerm;
+  predicate: RDFTerm | PathExpression;
   object: RDFTerm;
   location?: SourceLocation;
 }
@@ -95,7 +95,13 @@ export interface InverseDeclaration {
   location?: SourceLocation;
 }
 
-export type Declaration = TransitiveDeclaration | SymmetricDeclaration | InverseDeclaration;
+export interface ReflexiveDeclaration {
+  type: 'reflexive';
+  property: string;
+  location?: SourceLocation;
+}
+
+export type Declaration = TransitiveDeclaration | SymmetricDeclaration | InverseDeclaration | ReflexiveDeclaration;
 
 export interface DataBlock {
   type: 'data';
@@ -159,13 +165,85 @@ export interface IRIExpression {
   value: string;
 }
 
+export interface InExpression {
+  type: 'in';
+  value: Expression;
+  list: Expression[];
+  negated: boolean;
+}
+
+export interface ExistsExpression {
+  type: 'exists';
+  patterns: BodyElement[];
+  negated: boolean;
+}
+
+// Path Expression Types
+export interface PathIRI {
+  pathType: 'iri';
+  value: string;
+}
+
+export interface PathVariable {
+  pathType: 'variable';
+  name: string;
+}
+
+export interface PathSequence {
+  pathType: 'sequence';
+  elements: PathExpression[];
+}
+
+export interface PathAlternative {
+  pathType: 'alternative';
+  options: PathExpression[];
+}
+
+export interface PathInverse {
+  pathType: 'inverse';
+  path: PathExpression;
+}
+
+export interface PathZeroOrMore {
+  pathType: 'zeroOrMore';
+  path: PathExpression;
+}
+
+export interface PathOneOrMore {
+  pathType: 'oneOrMore';
+  path: PathExpression;
+}
+
+export interface PathZeroOrOne {
+  pathType: 'zeroOrOne';
+  path: PathExpression;
+}
+
+export interface PathNegatedPropertySet {
+  pathType: 'negatedPropertySet';
+  iris: Array<{ iri: string; inverse: boolean }>;
+}
+
+export type PathExpression = 
+  | PathIRI 
+  | PathVariable
+  | PathSequence 
+  | PathAlternative 
+  | PathInverse 
+  | PathZeroOrMore 
+  | PathOneOrMore 
+  | PathZeroOrOne
+  | PathNegatedPropertySet;
+
 export type Expression = 
   | BinaryExpression 
   | UnaryExpression 
   | FunctionCall 
   | VariableExpression 
   | LiteralExpression
-  | IRIExpression;
+  | IRIExpression
+  | InExpression
+  | ExistsExpression;
 
 interface CSTChildren {
   [key: string]: (CstNode | IToken)[];
@@ -354,6 +432,13 @@ export class ASTBuilder {
         property2: this.visitIriRef(iriNodes[1]),
         location: getLocationFromNode(node),
       };
+    } else if (children.Reflexive) {
+      const iriNode = children.iriRef?.[0] as CstNode;
+      return {
+        type: 'reflexive',
+        property: this.visitIriRef(iriNode),
+        location: getLocationFromNode(node),
+      };
     }
     
     throw new Error('Unknown declaration type');
@@ -429,9 +514,9 @@ export class ASTBuilder {
     return patterns;
   }
 
-  private visitPredicateObjectList(node: CstNode): Array<{ predicate: RDFTerm; objects: RDFTerm[] }> {
+  private visitPredicateObjectList(node: CstNode): Array<{ predicate: RDFTerm | PathExpression; objects: RDFTerm[] }> {
     const children = node.children as CSTChildren;
-    const result: Array<{ predicate: RDFTerm; objects: RDFTerm[] }> = [];
+    const result: Array<{ predicate: RDFTerm | PathExpression; objects: RDFTerm[] }> = [];
     
     const verbNodes = children.verb as CstNode[] | undefined;
     const objectListNodes = children.objectList as CstNode[] | undefined;
@@ -447,7 +532,7 @@ export class ASTBuilder {
     return result;
   }
 
-  private visitVerb(node: CstNode): RDFTerm {
+  private visitVerb(node: CstNode): RDFTerm | PathExpression {
     const children = node.children as CSTChildren;
     
     if (children.RdfType) {
@@ -455,11 +540,148 @@ export class ASTBuilder {
         termType: 'iri',
         value: 'http://www.w3.org/1999/02/22-rdf-syntax-ns#type',
       };
+    } else if (children.pathExpression) {
+      return this.visitPathExpression(children.pathExpression[0] as CstNode);
+    }
+    
+    throw new Error('Unknown verb type');
+  }
+
+  private visitPathExpression(node: CstNode): RDFTerm | PathExpression {
+    const children = node.children as CSTChildren;
+    const pathAltNode = children.pathAlternative?.[0] as CstNode;
+    return this.visitPathAlternative(pathAltNode);
+  }
+
+  private visitPathAlternative(node: CstNode): RDFTerm | PathExpression {
+    const children = node.children as CSTChildren;
+    const seqNodes = children.pathSequence as CstNode[];
+    
+    if (seqNodes.length === 1) {
+      return this.visitPathSequence(seqNodes[0]);
+    }
+    
+    const options = seqNodes.map(n => this.visitPathSequence(n));
+    // If all options are simple paths (single elements), check if they can be simplified
+    const allPaths = options.map(o => this.toPathExpression(o));
+    
+    return {
+      pathType: 'alternative',
+      options: allPaths,
+    };
+  }
+
+  private visitPathSequence(node: CstNode): RDFTerm | PathExpression {
+    const children = node.children as CSTChildren;
+    const eltNodes = children.pathEltOrInverse as CstNode[];
+    
+    if (eltNodes.length === 1) {
+      return this.visitPathEltOrInverse(eltNodes[0]);
+    }
+    
+    const elements = eltNodes.map(n => this.visitPathEltOrInverse(n));
+    const allPaths = elements.map(e => this.toPathExpression(e));
+    
+    return {
+      pathType: 'sequence',
+      elements: allPaths,
+    };
+  }
+
+  private visitPathEltOrInverse(node: CstNode): RDFTerm | PathExpression {
+    const children = node.children as CSTChildren;
+    const isInverse = !!children.Caret;
+    const pathEltNode = children.pathElt?.[0] as CstNode;
+    const elt = this.visitPathElt(pathEltNode);
+    
+    if (isInverse) {
+      return {
+        pathType: 'inverse',
+        path: this.toPathExpression(elt),
+      };
+    }
+    
+    return elt;
+  }
+
+  private visitPathElt(node: CstNode): RDFTerm | PathExpression {
+    const children = node.children as CSTChildren;
+    const primaryNode = children.pathPrimary?.[0] as CstNode;
+    const modNode = children.pathMod?.[0] as CstNode | undefined;
+    
+    let primary = this.visitPathPrimary(primaryNode);
+    
+    if (modNode) {
+      const mod = this.visitPathMod(modNode);
+      const path = this.toPathExpression(primary);
+      
+      switch (mod) {
+        case '?':
+          return { pathType: 'zeroOrOne', path };
+        case '*':
+          return { pathType: 'zeroOrMore', path };
+        case '+':
+          return { pathType: 'oneOrMore', path };
+      }
+    }
+    
+    return primary;
+  }
+
+  private visitPathMod(node: CstNode): '?' | '*' | '+' {
+    const children = node.children as CSTChildren;
+    if (children.QuestionMark) return '?';
+    if (children.Asterisk) return '*';
+    if (children.Plus) return '+';
+    throw new Error('Unknown path modifier');
+  }
+
+  private visitPathPrimary(node: CstNode): RDFTerm | PathExpression {
+    const children = node.children as CSTChildren;
+    
+    if (children.pathExpression) {
+      return this.visitPathExpression(children.pathExpression[0] as CstNode);
+    } else if (children.Bang && children.pathNegatedPropertySet) {
+      return this.visitPathNegatedPropertySet(children.pathNegatedPropertySet[0] as CstNode);
     } else if (children.varOrIri) {
       return this.visitVarOrIri(children.varOrIri[0] as CstNode);
     }
     
-    throw new Error('Unknown verb type');
+    throw new Error('Unknown path primary type');
+  }
+
+  private visitPathNegatedPropertySet(node: CstNode): PathExpression {
+    const children = node.children as CSTChildren;
+    const iris: Array<{ iri: string; inverse: boolean }> = [];
+    
+    if (children.pathOneInPropertySet) {
+      for (const propNode of children.pathOneInPropertySet as CstNode[]) {
+        const propChildren = propNode.children as CSTChildren;
+        const isInverse = !!propChildren.Caret;
+        const iriNode = propChildren.iriRef?.[0] as CstNode;
+        if (iriNode) {
+          iris.push({ iri: this.visitIriRef(iriNode), inverse: isInverse });
+        }
+      }
+    }
+    
+    return {
+      pathType: 'negatedPropertySet',
+      iris,
+    };
+  }
+
+  private toPathExpression(term: RDFTerm | PathExpression): PathExpression {
+    if ('pathType' in term) {
+      return term;
+    }
+    if (term.termType === 'iri') {
+      return { pathType: 'iri', value: term.value };
+    }
+    if (term.termType === 'variable') {
+      return { pathType: 'variable', name: term.value };
+    }
+    throw new Error(`Cannot convert ${term.termType} to path expression`);
   }
 
   private visitVarOrIri(node: CstNode): RDFTerm {
@@ -833,6 +1055,18 @@ export class ASTBuilder {
     const numericNodes = children.numericExpression as CstNode[];
     
     if (numericNodes.length === 1) {
+      // Check for IN / NOT IN
+      if (children.In) {
+        const left = this.visitNumericExpression(numericNodes[0]);
+        const exprListNode = children.expressionList?.[0] as CstNode | undefined;
+        const list = exprListNode ? this.visitExpressionList(exprListNode) : [];
+        return {
+          type: 'in',
+          value: left,
+          list,
+          negated: !!children.Not,
+        };
+      }
       return this.visitNumericExpression(numericNodes[0]);
     }
     
@@ -862,6 +1096,19 @@ export class ASTBuilder {
       left,
       right,
     };
+  }
+
+  private visitExpressionList(node: CstNode): Expression[] {
+    const children = node.children as CSTChildren;
+    const expressions: Expression[] = [];
+    
+    if (children.expression) {
+      for (const exprNode of children.expression) {
+        expressions.push(this.visitExpression(exprNode as CstNode));
+      }
+    }
+    
+    return expressions;
   }
 
   private visitNumericExpression(node: CstNode): Expression {
@@ -950,7 +1197,11 @@ export class ASTBuilder {
   private visitPrimaryExpression(node: CstNode): Expression {
     const children = node.children as CSTChildren;
     
-    if (children.brackettedExpression) {
+    if (children.existsFunc) {
+      return this.visitExistsFunc(children.existsFunc[0] as CstNode);
+    } else if (children.notExistsFunc) {
+      return this.visitNotExistsFunc(children.notExistsFunc[0] as CstNode);
+    } else if (children.brackettedExpression) {
       return this.visitBrackettedExpression(children.brackettedExpression[0] as CstNode);
     } else if (children.builtInCall) {
       return this.visitBuiltInCall(children.builtInCall[0] as CstNode);
@@ -976,6 +1227,28 @@ export class ASTBuilder {
     }
     
     throw new Error('Unknown primaryExpression type');
+  }
+
+  private visitExistsFunc(node: CstNode): ExistsExpression {
+    const children = node.children as CSTChildren;
+    const bodyPattern1Node = children.bodyPattern1?.[0] as CstNode;
+    
+    return {
+      type: 'exists',
+      patterns: this.visitBodyPattern1(bodyPattern1Node),
+      negated: false,
+    };
+  }
+
+  private visitNotExistsFunc(node: CstNode): ExistsExpression {
+    const children = node.children as CSTChildren;
+    const bodyPattern1Node = children.bodyPattern1?.[0] as CstNode;
+    
+    return {
+      type: 'exists',
+      patterns: this.visitBodyPattern1(bodyPattern1Node),
+      negated: true,
+    };
   }
 
   private visitBrackettedExpression(node: CstNode): Expression {

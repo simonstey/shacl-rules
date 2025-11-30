@@ -1,12 +1,23 @@
-import { Term, Literal, NamedNode, DataFactory } from 'n3';
-import { Expression, BinaryOperator, UnaryOperator } from '../srl/ast';
-import { SolutionMapping } from './pattern-matcher';
+import { Term, Literal, NamedNode, DataFactory, Store } from 'n3';
+import { Expression, BinaryOperator, UnaryOperator, BodyElement, TriplePattern } from '../srl/ast';
+import { SolutionMapping, joinSolutions, substitutePattern, isVariable } from './pattern-matcher';
 
 const { namedNode, literal } = DataFactory;
 
 export type EvalResult = Term | boolean | number | string | null;
 
 const XSD = 'http://www.w3.org/2001/XMLSchema#';
+
+// Store reference for EXISTS evaluation (set during rule evaluation)
+let currentStore: Store | null = null;
+
+export function setCurrentStore(store: Store | null): void {
+  currentStore = store;
+}
+
+export function getCurrentStore(): Store | null {
+  return currentStore;
+}
 
 export function isNumeric(term: Term): boolean {
   if (term.termType !== 'Literal') return false;
@@ -119,9 +130,52 @@ export function evaluateExpression(expr: Expression, solution: SolutionMapping):
     case 'function':
       return evaluateFunction(expr.name, expr.args, solution);
       
+    case 'in':
+      return evaluateIn(expr.value, expr.list, expr.negated, solution);
+      
+    case 'exists':
+      return evaluateExists(expr.patterns, expr.negated, solution);
+      
     default:
       return null;
   }
+}
+
+function evaluateIn(value: Expression, list: Expression[], negated: boolean, solution: SolutionMapping): boolean {
+  const evalValue = evaluateExpression(value, solution);
+  
+  for (const item of list) {
+    const evalItem = evaluateExpression(item, solution);
+    if (termsEqual(evalValue, evalItem)) {
+      return !negated;
+    }
+  }
+  
+  return negated;
+}
+
+function evaluateExists(patterns: BodyElement[], negated: boolean, solution: SolutionMapping): boolean {
+  if (!currentStore) {
+    console.warn('EXISTS evaluation requires a store context');
+    return negated;
+  }
+  
+  // Extract triple patterns from body elements
+  const triplePatterns: TriplePattern[] = [];
+  for (const element of patterns) {
+    if ('subject' in element && 'predicate' in element && 'object' in element) {
+      triplePatterns.push(element as TriplePattern);
+    }
+  }
+  
+  // Substitute current solution into patterns
+  const substitutedPatterns = triplePatterns.map(p => substitutePattern(p, solution));
+  
+  // Check if any matches exist
+  const matches = joinSolutions([{}], substitutedPatterns, currentStore);
+  const exists = matches.length > 0;
+  
+  return negated ? !exists : exists;
 }
 
 function evaluateBinary(
@@ -322,6 +376,9 @@ function evaluateFunction(name: string, args: Expression[], solution: SolutionMa
       return str.replace(new RegExp(pattern, 'g'), replacement);
     }
     
+    case 'ENCODE_FOR_URI':
+      return encodeURIComponent(toString(evalArgs[0]));
+      
     case 'ABS': {
       const num = getNumberFromResult(evalArgs[0]);
       return num !== null ? Math.abs(num) : null;
@@ -342,6 +399,9 @@ function evaluateFunction(name: string, args: Expression[], solution: SolutionMa
       return num !== null ? Math.floor(num) : null;
     }
     
+    case 'RAND':
+      return Math.random();
+    
     case 'IF': {
       const condition = toBoolean(evalArgs[0]);
       return condition ? evalArgs[1] : evalArgs[2];
@@ -352,6 +412,21 @@ function evaluateFunction(name: string, args: Expression[], solution: SolutionMa
         if (arg !== null) return arg;
       }
       return null;
+    }
+    
+    case 'SAMETERM': {
+      const left = evalArgs[0];
+      const right = evalArgs[1];
+      if (!isTerm(left) || !isTerm(right)) return false;
+      if (left.termType !== right.termType) return false;
+      if (left.termType === 'Literal' && right.termType === 'Literal') {
+        const l1 = left as Literal;
+        const l2 = right as Literal;
+        return l1.value === l2.value && 
+               l1.datatype?.value === l2.datatype?.value &&
+               l1.language === l2.language;
+      }
+      return left.value === right.value;
     }
     
     case 'ISIRI':
@@ -378,6 +453,13 @@ function evaluateFunction(name: string, args: Expression[], solution: SolutionMa
       return '';
     }
     
+    case 'LANGMATCHES': {
+      const tag = toString(evalArgs[0]).toLowerCase();
+      const range = toString(evalArgs[1]).toLowerCase();
+      if (range === '*') return tag.length > 0;
+      return tag === range || tag.startsWith(range + '-');
+    }
+    
     case 'DATATYPE': {
       if (isTerm(evalArgs[0]) && evalArgs[0].termType === 'Literal') {
         const dt = (evalArgs[0] as Literal).datatype;
@@ -386,8 +468,66 @@ function evaluateFunction(name: string, args: Expression[], solution: SolutionMa
       return null;
     }
     
+    case 'IRI':
+    case 'URI': {
+      const str = toString(evalArgs[0]);
+      return namedNode(str);
+    }
+    
+    case 'BNODE': {
+      if (evalArgs.length === 0) {
+        return { termType: 'BlankNode', value: `b${Math.random().toString(36).substring(2, 10)}` } as Term;
+      }
+      const str = toString(evalArgs[0]);
+      return { termType: 'BlankNode', value: str } as Term;
+    }
+    
+    case 'STRDT': {
+      const str = toString(evalArgs[0]);
+      const dt = toString(evalArgs[1]);
+      return literal(str, namedNode(dt));
+    }
+    
+    case 'STRLANG': {
+      const str = toString(evalArgs[0]);
+      const lang = toString(evalArgs[1]);
+      return literal(str, lang);
+    }
+    
+    case 'STRBEFORE': {
+      const str = toString(evalArgs[0]);
+      const substr = toString(evalArgs[1]);
+      const idx = str.indexOf(substr);
+      return idx >= 0 ? str.substring(0, idx) : '';
+    }
+    
+    case 'STRAFTER': {
+      const str = toString(evalArgs[0]);
+      const substr = toString(evalArgs[1]);
+      const idx = str.indexOf(substr);
+      return idx >= 0 ? str.substring(idx + substr.length) : '';
+    }
+    
+    case 'REGEX': {
+      const str = toString(evalArgs[0]);
+      const pattern = toString(evalArgs[1]);
+      const flags = evalArgs[2] ? toString(evalArgs[2]) : '';
+      try {
+        const regex = new RegExp(pattern, flags);
+        return regex.test(str);
+      } catch {
+        return false;
+      }
+    }
+    
     case 'NOW':
       return literal(new Date().toISOString(), namedNode(`${XSD}dateTime`));
+    
+    case 'UUID':
+      return namedNode(`urn:uuid:${crypto.randomUUID()}`);
+      
+    case 'STRUUID':
+      return crypto.randomUUID();
       
     case 'YEAR':
     case 'MONTH':
@@ -400,14 +540,47 @@ function evaluateFunction(name: string, args: Expression[], solution: SolutionMa
       if (isNaN(date.getTime())) return null;
       
       switch (name.toUpperCase()) {
-        case 'YEAR': return date.getFullYear();
-        case 'MONTH': return date.getMonth() + 1;
-        case 'DAY': return date.getDate();
-        case 'HOURS': return date.getHours();
-        case 'MINUTES': return date.getMinutes();
-        case 'SECONDS': return date.getSeconds();
+        case 'YEAR': return date.getUTCFullYear();
+        case 'MONTH': return date.getUTCMonth() + 1;
+        case 'DAY': return date.getUTCDate();
+        case 'HOURS': return date.getUTCHours();
+        case 'MINUTES': return date.getUTCMinutes();
+        case 'SECONDS': return date.getUTCSeconds() + date.getUTCMilliseconds() / 1000;
       }
       return null;
+    }
+    
+    case 'TIMEZONE': {
+      const dateStr = toString(evalArgs[0]);
+      // Check for explicit timezone in ISO string
+      const match = dateStr.match(/([+-])(\d{2}):(\d{2})$/);
+      if (match) {
+        const sign = match[1] === '+' ? '' : '-';
+        const hours = parseInt(match[2], 10);
+        const minutes = parseInt(match[3], 10);
+        return literal(`${sign}PT${hours}H${minutes}M`, namedNode(`${XSD}dayTimeDuration`));
+      }
+      if (dateStr.endsWith('Z')) {
+        return literal('PT0S', namedNode(`${XSD}dayTimeDuration`));
+      }
+      return null;
+    }
+    
+    case 'TZ': {
+      const dateStr = toString(evalArgs[0]);
+      const match = dateStr.match(/([+-]\d{2}:\d{2})$|Z$/);
+      return match ? match[0] : '';
+    }
+    
+    case 'MD5':
+    case 'SHA1':
+    case 'SHA256':
+    case 'SHA384':
+    case 'SHA512': {
+      // Hash functions require async, return placeholder for now
+      // In a real implementation, use Web Crypto API with async evaluation
+      console.warn(`Hash function ${name} requires async evaluation - returning placeholder`);
+      return `[${name}:${toString(evalArgs[0]).substring(0, 10)}...]`;
     }
     
     default:

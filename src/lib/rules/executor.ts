@@ -18,9 +18,10 @@ import {
   joinSolutions,
   termToN3,
   n3TermToRDFTerm,
-  isVariable
+  isVariable,
+  isRDFTerm
 } from './pattern-matcher';
-import { evaluateFilter, evaluateExpression, resultToTerm } from './expression-evaluator';
+import { evaluateFilter, evaluateExpression, resultToTerm, setCurrentStore } from './expression-evaluator';
 import { stratifyRules, StratifiedRule } from './stratifier';
 
 export interface InferredTriple {
@@ -163,6 +164,31 @@ export function expandDeclarations(declarations: Declaration[], prefixes: Map<st
         });
         break;
       }
+      
+      case 'reflexive': {
+        // REFLEXIVE(p) expands to: RULE { ?x p ?x } WHERE { ?x p ?y }
+        const prop: RDFTerm = { termType: 'iri', value: decl.property };
+        expandedRules.push({
+          type: 'rule',
+          name: `REFLEXIVE(${decl.property})`,
+          head: {
+            patterns: [{
+              subject: { termType: 'variable', value: 'x' },
+              predicate: prop,
+              object: { termType: 'variable', value: 'x' },
+            }]
+          },
+          body: {
+            elements: [{
+              subject: { termType: 'variable', value: 'x' },
+              predicate: prop,
+              object: { termType: 'variable', value: 'y' },
+            }]
+          },
+          location: decl.location,
+        });
+        break;
+      }
     }
   }
   
@@ -271,7 +297,7 @@ function generateRuleName(rule: Rule, index: number): string {
   if (headPatterns.length > 0) {
     const firstPattern = headPatterns[0];
     const pred = firstPattern.predicate;
-    if (pred.termType === 'iri') {
+    if (isRDFTerm(pred) && pred.termType === 'iri') {
       const localName = pred.value.split(/[#\/]/).pop() || pred.value;
       return `Rule ${index + 1}: ${localName}`;
     }
@@ -305,7 +331,9 @@ export function executeRules(
   
   for (const dataBlock of ruleSet.dataBlocks) {
     for (const pattern of dataBlock.patterns) {
-      if (!isVariable(pattern.subject) && !isVariable(pattern.predicate) && !isVariable(pattern.object)) {
+      // Data block patterns should not have path expressions, only RDF terms
+      const pred = pattern.predicate;
+      if (!isVariable(pattern.subject) && isRDFTerm(pred) && !isVariable(pred) && !isVariable(pattern.object)) {
         const quad = instantiateTriple(pattern, {});
         if (quad) {
           store.addQuad(quad);
@@ -334,6 +362,9 @@ export function executeRules(
   for (const quad of baseTriples) {
     seenTriples.add(quadToString(quad));
   }
+  
+  // Set the current store for EXISTS evaluation
+  setCurrentStore(store);
   
   let totalIterations = 0;
   
@@ -380,6 +411,9 @@ export function executeRules(
   }
   
   const executionTime = performance.now() - startTime;
+  
+  // Clear the current store reference
+  setCurrentStore(null);
   
   return {
     inferredTriples,

@@ -1,4 +1,4 @@
-import { Rule, TriplePattern, BodyElement, NegationElement, RDFTerm } from '../srl/ast';
+import { Rule, TriplePattern, BodyElement, NegationElement, RDFTerm, PathExpression } from '../srl/ast';
 
 export interface StratifiedRule {
   rule: Rule;
@@ -14,8 +14,16 @@ interface RuleAnalysis {
   negatedPredicates: Set<string>;
 }
 
-function getPredicateFromTerm(term: RDFTerm): string | null {
-  if (term.termType === 'iri') {
+function isRDFTerm(term: RDFTerm | PathExpression): term is RDFTerm {
+  return 'termType' in term;
+}
+
+function getPredicateFromTerm(term: RDFTerm | PathExpression): string | null {
+  if (isRDFTerm(term) && term.termType === 'iri') {
+    return term.value;
+  }
+  // For path expressions, extract the primary IRI if it's a simple path
+  if ('pathType' in term && term.pathType === 'iri') {
     return term.value;
   }
   return null;

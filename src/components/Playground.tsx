@@ -4,14 +4,17 @@ import { useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import dynamic from 'next/dynamic';
 import type { Monaco } from '@monaco-editor/react';
 import type { editor } from 'monaco-editor';
+import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels';
 import { Example } from '@/lib/examples';
 import { useValidation } from '@/lib/validation';
 import { useRuleExecution } from '@/lib/rules/useRuleExecution';
 import { ExamplesSidebar, ValidationPanel, FileUpload, InferredTriplesPanel } from '@/components';
-import { ResizablePanels } from './ResizablePanels';
+import { ResizablePanels, ResizeHandle } from './ResizablePanels';
 import { SyntaxBreakdown } from './SyntaxBreakdown';
 import { SyntaxDiagramPanel } from './SyntaxDiagramPanel';
 import { RuleInfo, InferredTriple } from '@/lib/rules/executor';
+
+type RightPanelTab = 'validation' | 'inferred';
 
 const SRLEditor = dynamic(() => import('@/components/SRLEditor').then((mod) => mod.SRLEditor), {
   ssr: false,
@@ -70,8 +73,8 @@ export function Playground() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [theme, setTheme] = useState<'light' | 'dark'>('dark');
   const [showSyntaxPanel, setShowSyntaxPanel] = useState(true);
-  const [showInferredPanel, setShowInferredPanel] = useState(false);
   const [showDiagramPanel, setShowDiagramPanel] = useState(false);
+  const [activeRightTab, setActiveRightTab] = useState<RightPanelTab>('validation');
   const [highlightedRuleIndex, setHighlightedRuleIndex] = useState<number | null>(null);
   const [highlightedGrammarRule, setHighlightedGrammarRule] = useState<string | null>(null);
   
@@ -122,7 +125,7 @@ export function Playground() {
   }, []);
 
   const handleRunRules = useCallback(() => {
-    setShowInferredPanel(true);
+    setActiveRightTab('inferred');
     execute(srlCode, rdfData);
   }, [srlCode, rdfData, execute]);
 
@@ -262,31 +265,6 @@ export function Playground() {
             {isExecuting ? 'Running...' : 'Run Rules'}
           </button>
 
-          {/* Toggle inferred triples panel */}
-          <button
-            onClick={() => setShowInferredPanel(!showInferredPanel)}
-            className={`p-2 rounded-lg transition-colors ${
-              showInferredPanel
-                ? theme === 'dark' ? 'bg-green-500/20 text-green-400' : 'bg-green-100 text-green-600'
-                : theme === 'dark' ? 'hover:bg-zinc-800 text-zinc-400' : 'hover:bg-zinc-200 text-zinc-600'
-            }`}
-            title={showInferredPanel ? 'Hide inferred triples' : 'Show inferred triples'}
-          >
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              width="16"
-              height="16"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            >
-              <path d="M13 10V3L4 14h7v7l9-11h-7z" />
-            </svg>
-          </button>
-
           {/* Toggle syntax diagrams panel */}
           <button
             onClick={() => setShowDiagramPanel(!showDiagramPanel)}
@@ -413,41 +391,30 @@ export function Playground() {
         />
 
         {/* Editor area */}
-        <div className="flex-1 overflow-hidden flex">
-          <div className={`flex-1 overflow-hidden ${showInferredPanel ? 'flex' : ''}`}>
-            <div className={`${showInferredPanel ? 'flex-1' : 'h-full'} overflow-hidden`}>
+        <div className="flex-1 overflow-hidden">
+          <PanelGroup direction="horizontal" className="h-full">
+            {/* Main editors section */}
+            <Panel defaultSize={75} minSize={40}>
               <ResizablePanels
                 theme={theme}
                 leftTitle="Data Graph (Turtle)"
                 rightTitle="Rules (SRL)"
                 bottomTitle={showDiagramPanel ? "Syntax Diagrams" : "Syntax Analysis"}
-                defaultLeftSize={35}
+                defaultLeftSize={40}
                 defaultBottomSize={28}
                 showBottom={showSyntaxPanel || showDiagramPanel}
                 leftPanel={
                   <RDFEditor value={rdfData} onChange={setRdfData} theme={theme} />
                 }
                 rightPanel={
-                  <div className="h-full flex">
-                    <div className="flex-1">
-                      <SRLEditor
-                        value={srlCode}
-                        onChange={setSrlCode}
-                        validationMessages={result?.messages}
-                        theme={theme}
-                        onEditorReady={handleSRLEditorReady}
-                        onGrammarRuleChange={showDiagramPanel ? handleGrammarRuleChange : undefined}
-                      />
-                    </div>
-                    {/* Inline validation summary */}
-                    <div
-                      className={`w-64 border-l shrink-0 ${
-                        theme === 'dark' ? 'border-zinc-700/50 bg-zinc-900' : 'border-zinc-200 bg-white'
-                      }`}
-                    >
-                      <ValidationPanel result={result} isValidating={isValidating} theme={theme} />
-                    </div>
-                  </div>
+                  <SRLEditor
+                    value={srlCode}
+                    onChange={setSrlCode}
+                    validationMessages={result?.messages}
+                    theme={theme}
+                    onEditorReady={handleSRLEditorReady}
+                    onGrammarRuleChange={showDiagramPanel ? handleGrammarRuleChange : undefined}
+                  />
                 }
                 bottomPanel={
                   showDiagramPanel ? (
@@ -467,24 +434,96 @@ export function Playground() {
                   )
                 }
               />
-            </div>
-            
-            {/* Inferred Triples Panel */}
-            {showInferredPanel && (
-              <div className={`w-80 shrink-0 border-l flex flex-col ${
-                theme === 'dark' ? 'border-zinc-700 bg-zinc-900' : 'border-zinc-200 bg-white'
+            </Panel>
+
+            <ResizeHandle direction="horizontal" theme={theme} />
+
+            {/* Right panel with tabs for Validation and Inferred Triples */}
+            <Panel defaultSize={25} minSize={15} maxSize={50}>
+              <div className={`h-full flex flex-col ${
+                theme === 'dark' ? 'bg-zinc-900 border-l border-zinc-800' : 'bg-white border-l border-zinc-200'
               }`}>
-                <InferredTriplesPanel
-                  result={executionResult}
-                  prefixes={prefixes}
-                  theme={theme}
-                  onRuleHover={handleRuleHover}
-                  onTripleHover={handleTripleHover}
-                  highlightedRuleIndex={highlightedRuleIndex}
-                />
+                {/* Tab headers */}
+                <div className={`shrink-0 flex border-b ${
+                  theme === 'dark' ? 'border-zinc-700/50 bg-zinc-900' : 'border-zinc-200 bg-zinc-50'
+                }`}>
+                  <button
+                    onClick={() => setActiveRightTab('validation')}
+                    className={`flex-1 px-3 py-2 text-xs font-medium transition-colors relative ${
+                      activeRightTab === 'validation'
+                        ? theme === 'dark' ? 'text-zinc-100' : 'text-zinc-900'
+                        : theme === 'dark' ? 'text-zinc-500 hover:text-zinc-300' : 'text-zinc-500 hover:text-zinc-700'
+                    }`}
+                  >
+                    <span className="flex items-center justify-center gap-1.5">
+                      <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <path d="M9 12l2 2 4-4" />
+                        <circle cx="12" cy="12" r="10" />
+                      </svg>
+                      Validation
+                      {result && (
+                        <span className={`text-[10px] px-1 py-0.5 rounded ${
+                          result.isValid
+                            ? theme === 'dark' ? 'bg-green-500/20 text-green-400' : 'bg-green-100 text-green-700'
+                            : theme === 'dark' ? 'bg-red-500/20 text-red-400' : 'bg-red-100 text-red-700'
+                        }`}>
+                          {result.messages.filter(m => m.type === 'error').length || '✓'}
+                        </span>
+                      )}
+                    </span>
+                    {activeRightTab === 'validation' && (
+                      <div className={`absolute bottom-0 left-0 right-0 h-0.5 ${
+                        theme === 'dark' ? 'bg-blue-500' : 'bg-blue-600'
+                      }`} />
+                    )}
+                  </button>
+                  <button
+                    onClick={() => setActiveRightTab('inferred')}
+                    className={`flex-1 px-3 py-2 text-xs font-medium transition-colors relative ${
+                      activeRightTab === 'inferred'
+                        ? theme === 'dark' ? 'text-zinc-100' : 'text-zinc-900'
+                        : theme === 'dark' ? 'text-zinc-500 hover:text-zinc-300' : 'text-zinc-500 hover:text-zinc-700'
+                    }`}
+                  >
+                    <span className="flex items-center justify-center gap-1.5">
+                      <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <path d="M13 10V3L4 14h7v7l9-11h-7z" />
+                      </svg>
+                      Inferred
+                      {executionResult && executionResult.errors.length === 0 && (
+                        <span className={`text-[10px] px-1 py-0.5 rounded ${
+                          theme === 'dark' ? 'bg-green-500/20 text-green-400' : 'bg-green-100 text-green-700'
+                        }`}>
+                          {executionResult.inferredTriples.length}
+                        </span>
+                      )}
+                    </span>
+                    {activeRightTab === 'inferred' && (
+                      <div className={`absolute bottom-0 left-0 right-0 h-0.5 ${
+                        theme === 'dark' ? 'bg-green-500' : 'bg-green-600'
+                      }`} />
+                    )}
+                  </button>
+                </div>
+
+                {/* Tab content */}
+                <div className="flex-1 overflow-hidden">
+                  {activeRightTab === 'validation' ? (
+                    <ValidationPanel result={result} isValidating={isValidating} theme={theme} />
+                  ) : (
+                    <InferredTriplesPanel
+                      result={executionResult}
+                      prefixes={prefixes}
+                      theme={theme}
+                      onRuleHover={handleRuleHover}
+                      onTripleHover={handleTripleHover}
+                      highlightedRuleIndex={highlightedRuleIndex}
+                    />
+                  )}
+                </div>
               </div>
-            )}
-          </div>
+            </Panel>
+          </PanelGroup>
         </div>
       </div>
 
