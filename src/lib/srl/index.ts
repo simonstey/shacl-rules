@@ -1,0 +1,28 @@
+export * from './tokens';
+export * from './parser';
+export { 
+  type RDFTerm,
+  type IRITerm,
+  type LiteralTerm,
+  type BlankNodeTerm,
+  type VariableTerm,
+  type TriplePattern,
+  type FilterElement,
+  type BindElement,
+  type NegationElement,
+  type BodyElement,
+  type RuleHead,
+  type RuleBody,
+  type Rule as ASTRule,
+  type TransitiveDeclaration,
+  type SymmetricDeclaration,
+  type InverseDeclaration,
+  type Declaration,
+  type DataBlock,
+  type RuleSet,
+  type Expression,
+  type BinaryOperator,
+  type UnaryOperator,
+  type SourceLocation,
+  buildAST,
+} from './ast';
