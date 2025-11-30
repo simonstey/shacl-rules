@@ -7,12 +7,15 @@ import type { editor } from 'monaco-editor';
 import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels';
 import { Example } from '@/lib/examples';
 import { useValidation } from '@/lib/validation';
+import { useNodeExprValidation } from '@/lib/validation/useNodeExprValidation';
 import { useRuleExecution } from '@/lib/rules/useRuleExecution';
 import { ExamplesSidebar, ValidationPanel, FileUpload, InferredTriplesPanel } from '@/components';
+import { ModeSelector, type PlaygroundMode } from './ModeSelector';
 import { ResizablePanels, ResizeHandle } from './ResizablePanels';
 import { SyntaxBreakdown } from './SyntaxBreakdown';
 import { SyntaxDiagramPanel } from './SyntaxDiagramPanel';
 import { RuleInfo, InferredTriple } from '@/lib/rules/executor';
+import { NodeExprExample } from '@/lib/examples/node-expr-examples';
 
 type RightPanelTab = 'validation' | 'inferred';
 
@@ -33,6 +36,29 @@ const RDFEditor = dynamic(() => import('@/components/RDFEditor').then((mod) => m
     </div>
   ),
 });
+
+const NodeExprEditor = dynamic(() => import('@/components/NodeExprEditor').then((mod) => mod.NodeExprEditor), {
+  ssr: false,
+  loading: () => (
+    <div className="h-full flex items-center justify-center bg-zinc-900">
+      <div className="text-zinc-500">Loading editor...</div>
+    </div>
+  ),
+});
+
+const NodeExprResultPanel = dynamic(() => import('@/components/NodeExprResultPanel').then((mod) => mod.NodeExprResultPanel), {
+  ssr: false,
+  loading: () => (
+    <div className="h-full flex items-center justify-center bg-zinc-900">
+      <div className="text-zinc-500">Loading panel...</div>
+    </div>
+  ),
+});
+
+const NodeExprExamplesSidebar = dynamic(() => import('@/components/NodeExprExamplesSidebar').then((mod) => mod.NodeExprExamplesSidebar), {
+  ssr: false,
+});
+
 
 const DEFAULT_SRL = `PREFIX : <http://example.org/>
 
@@ -67,9 +93,41 @@ const DEFAULT_RDF = `@prefix : <http://example.org/> .
 :tom :siblingOf :jane .
 `;
 
+const DEFAULT_NODE_EXPR = `@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix ex: <http://example.org/> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+# Node Expression: Get all values via foaf:name property path
+ex:NameExpr
+    sh:path ex:name .
+
+# Focus node to evaluate against - try ex:john
+`;
+
+const DEFAULT_NODE_EXPR_DATA = `@prefix ex: <http://example.org/> .
+@prefix foaf: <http://xmlns.com/foaf/0.1/> .
+
+ex:john ex:name "John Doe" ;
+    ex:age 30 ;
+    ex:email "john@example.org" .
+
+ex:mary ex:name "Mary Smith" ;
+    ex:age 25 .
+`;
+
 export function Playground() {
+  // Mode state
+  const [mode, setMode] = useState<PlaygroundMode>('srl');
+  
+  // SRL mode state
   const [srlCode, setSrlCode] = useState(DEFAULT_SRL);
   const [rdfData, setRdfData] = useState(DEFAULT_RDF);
+  
+  // Node Expression mode state
+  const [nodeExprCode, setNodeExprCode] = useState(DEFAULT_NODE_EXPR);
+  const [nodeExprData, setNodeExprData] = useState(DEFAULT_NODE_EXPR_DATA);
+  
+  // Common UI state
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [theme, setTheme] = useState<'light' | 'dark'>('dark');
   const [showSyntaxPanel, setShowSyntaxPanel] = useState(true);
@@ -85,6 +143,7 @@ export function Playground() {
   
   const ruleDecorationsRef = useRef<string[]>([]);
 
+  // SRL validation and execution
   const { result, isValidating, validate } = useValidation();
   const { 
     result: executionResult, 
@@ -95,13 +154,31 @@ export function Playground() {
     reset: resetExecution 
   } = useRuleExecution();
 
+  // Node Expression validation and evaluation
+  const {
+    validation: nodeExprValidation,
+    evaluation: nodeExprEvaluation,
+    validate: validateNodeExpr,
+    evaluate: evaluateNodeExpr,
+    clearEvaluation: clearNodeExprEvaluation,
+  } = useNodeExprValidation();
+
   const prefixes = useMemo(() => {
     return ruleSet?.prefixes ?? new Map<string, string>();
   }, [ruleSet]);
 
+  // Validate on code change (mode-specific)
   useEffect(() => {
-    validate(srlCode);
-  }, [srlCode, validate]);
+    if (mode === 'srl') {
+      validate(srlCode);
+    }
+  }, [srlCode, validate, mode]);
+
+  useEffect(() => {
+    if (mode === 'node-expressions') {
+      validateNodeExpr(nodeExprCode);
+    }
+  }, [nodeExprCode, validateNodeExpr, mode]);
 
   const handleSelectExample = useCallback((example: Example) => {
     setSrlCode(example.srlCode);
@@ -111,14 +188,32 @@ export function Playground() {
     resetExecution();
   }, [resetExecution]);
 
+  const handleSelectNodeExprExample = useCallback((expressionCode: string, rdfData: string) => {
+    setNodeExprCode(expressionCode);
+    setNodeExprData(rdfData);
+    clearNodeExprEvaluation();
+  }, [clearNodeExprEvaluation]);
+
   const handleFileUpload = useCallback((content: string, filename: string) => {
-    if (filename.endsWith('.srl') || filename.endsWith('.shacl')) {
-      setSrlCode(content);
+    if (mode === 'srl') {
+      if (filename.endsWith('.srl') || filename.endsWith('.shacl')) {
+        setSrlCode(content);
+      } else {
+        setRdfData(content);
+      }
+      resetExecution();
     } else {
-      setRdfData(content);
+      if (filename.endsWith('.ttl') || filename.endsWith('.turtle')) {
+        // Determine if it's expression or data based on content
+        if (content.includes('sh:path') || content.includes('sh:values')) {
+          setNodeExprCode(content);
+        } else {
+          setNodeExprData(content);
+        }
+      }
+      clearNodeExprEvaluation();
     }
-    resetExecution();
-  }, [resetExecution]);
+  }, [mode, resetExecution, clearNodeExprEvaluation]);
 
   const toggleTheme = useCallback(() => {
     setTheme((prev) => (prev === 'dark' ? 'light' : 'dark'));
@@ -128,6 +223,10 @@ export function Playground() {
     setActiveRightTab('inferred');
     execute(srlCode, rdfData);
   }, [srlCode, rdfData, execute]);
+
+  const handleEvaluateNodeExpr = useCallback(() => {
+    evaluateNodeExpr(nodeExprCode, nodeExprData);
+  }, [nodeExprCode, nodeExprData, evaluateNodeExpr]);
 
   const handleRuleHover = useCallback((ruleInfo: RuleInfo | null) => {
     setHighlightedRuleIndex(ruleInfo?.index ?? null);
@@ -232,38 +331,70 @@ export function Playground() {
           >
             v1.2
           </span>
+          
+          {/* Mode Selector */}
+          <ModeSelector mode={mode} onModeChange={setMode} theme={theme} />
         </div>
 
         <div className="flex items-center gap-2">
           <FileUpload onFileContent={handleFileUpload} />
 
-          {/* Run Rules button */}
-          <button
-            onClick={handleRunRules}
-            disabled={isExecuting || !result?.isValid}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
-              isExecuting
-                ? theme === 'dark' ? 'bg-zinc-700 text-zinc-400 cursor-wait' : 'bg-zinc-200 text-zinc-500 cursor-wait'
-                : !result?.isValid
-                ? theme === 'dark' ? 'bg-zinc-700 text-zinc-500 cursor-not-allowed' : 'bg-zinc-200 text-zinc-400 cursor-not-allowed'
-                : theme === 'dark' 
-                  ? 'bg-green-600 hover:bg-green-500 text-white' 
-                  : 'bg-green-600 hover:bg-green-500 text-white'
-            }`}
-            title={!result?.isValid ? 'Fix validation errors first' : 'Execute rules against RDF data'}
-          >
-            {isExecuting ? (
-              <svg className="w-4 h-4 animate-spin" viewBox="0 0 24 24" fill="none">
-                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-              </svg>
-            ) : (
-              <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <polygon points="5 3 19 12 5 21 5 3" />
-              </svg>
-            )}
-            {isExecuting ? 'Running...' : 'Run Rules'}
-          </button>
+          {/* Run/Evaluate button - context-sensitive */}
+          {mode === 'srl' ? (
+            <button
+              onClick={handleRunRules}
+              disabled={isExecuting || !result?.isValid}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
+                isExecuting
+                  ? theme === 'dark' ? 'bg-zinc-700 text-zinc-400 cursor-wait' : 'bg-zinc-200 text-zinc-500 cursor-wait'
+                  : !result?.isValid
+                  ? theme === 'dark' ? 'bg-zinc-700 text-zinc-500 cursor-not-allowed' : 'bg-zinc-200 text-zinc-400 cursor-not-allowed'
+                  : theme === 'dark' 
+                    ? 'bg-green-600 hover:bg-green-500 text-white' 
+                    : 'bg-green-600 hover:bg-green-500 text-white'
+              }`}
+              title={!result?.isValid ? 'Fix validation errors first' : 'Execute rules against RDF data'}
+            >
+              {isExecuting ? (
+                <svg className="w-4 h-4 animate-spin" viewBox="0 0 24 24" fill="none">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                </svg>
+              ) : (
+                <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <polygon points="5 3 19 12 5 21 5 3" />
+                </svg>
+              )}
+              {isExecuting ? 'Running...' : 'Run Rules'}
+            </button>
+          ) : (
+            <button
+              onClick={handleEvaluateNodeExpr}
+              disabled={nodeExprEvaluation.isEvaluating || !nodeExprValidation.isValid}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
+                nodeExprEvaluation.isEvaluating
+                  ? theme === 'dark' ? 'bg-zinc-700 text-zinc-400 cursor-wait' : 'bg-zinc-200 text-zinc-500 cursor-wait'
+                  : !nodeExprValidation.isValid
+                  ? theme === 'dark' ? 'bg-zinc-700 text-zinc-500 cursor-not-allowed' : 'bg-zinc-200 text-zinc-400 cursor-not-allowed'
+                  : theme === 'dark' 
+                    ? 'bg-purple-600 hover:bg-purple-500 text-white' 
+                    : 'bg-purple-600 hover:bg-purple-500 text-white'
+              }`}
+              title={!nodeExprValidation.isValid ? 'Fix parse errors first' : 'Evaluate node expression'}
+            >
+              {nodeExprEvaluation.isEvaluating ? (
+                <svg className="w-4 h-4 animate-spin" viewBox="0 0 24 24" fill="none">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                </svg>
+              ) : (
+                <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M13 10V3L4 14h7v7l9-11h-7z" />
+                </svg>
+              )}
+              {nodeExprEvaluation.isEvaluating ? 'Evaluating...' : 'Evaluate'}
+            </button>
+          )}
 
           {/* Toggle syntax diagrams panel */}
           <button
@@ -383,147 +514,211 @@ export function Playground() {
 
       {/* Main content */}
       <div className="flex-1 flex overflow-hidden">
-        {/* Sidebar */}
-        <ExamplesSidebar
-          onSelectExample={handleSelectExample}
-          isCollapsed={sidebarCollapsed}
-          onToggleCollapse={() => setSidebarCollapsed(!sidebarCollapsed)}
-        />
+        {/* Sidebar - mode-specific */}
+        {mode === 'srl' ? (
+          <ExamplesSidebar
+            onSelectExample={handleSelectExample}
+            isCollapsed={sidebarCollapsed}
+            onToggleCollapse={() => setSidebarCollapsed(!sidebarCollapsed)}
+          />
+        ) : (
+          <div className={`${sidebarCollapsed ? 'w-0' : 'w-64'} transition-all duration-200 overflow-hidden border-r ${
+            theme === 'dark' ? 'border-zinc-800' : 'border-zinc-200'
+          }`}>
+            <NodeExprExamplesSidebar
+              onSelectExample={handleSelectNodeExprExample}
+              theme={theme}
+            />
+          </div>
+        )}
 
         {/* Editor area */}
         <div className="flex-1 overflow-hidden">
-          <PanelGroup direction="horizontal" className="h-full">
-            {/* Main editors section */}
-            <Panel defaultSize={75} minSize={40}>
-              <ResizablePanels
-                theme={theme}
-                leftTitle="Data Graph (Turtle)"
-                rightTitle="Rules (SRL)"
-                bottomTitle={showDiagramPanel ? "Syntax Diagrams" : "Syntax Analysis"}
-                defaultLeftSize={40}
-                defaultBottomSize={28}
-                showBottom={showSyntaxPanel || showDiagramPanel}
-                leftPanel={
-                  <RDFEditor value={rdfData} onChange={setRdfData} theme={theme} />
-                }
-                rightPanel={
-                  <SRLEditor
-                    value={srlCode}
-                    onChange={setSrlCode}
-                    validationMessages={result?.messages}
-                    theme={theme}
-                    onEditorReady={handleSRLEditorReady}
-                    onGrammarRuleChange={showDiagramPanel ? handleGrammarRuleChange : undefined}
-                  />
-                }
-                bottomPanel={
-                  showDiagramPanel ? (
-                    <SyntaxDiagramPanel
+          {mode === 'srl' ? (
+            // SRL Mode Layout
+            <PanelGroup direction="horizontal" className="h-full">
+              {/* Main editors section */}
+              <Panel defaultSize={75} minSize={40}>
+                <ResizablePanels
+                  theme={theme}
+                  leftTitle="Data Graph (Turtle)"
+                  rightTitle="Rules (SRL)"
+                  bottomTitle={showDiagramPanel ? "Syntax Diagrams" : "Syntax Analysis"}
+                  defaultLeftSize={40}
+                  defaultBottomSize={28}
+                  showBottom={showSyntaxPanel || showDiagramPanel}
+                  leftPanel={
+                    <RDFEditor value={rdfData} onChange={setRdfData} theme={theme} />
+                  }
+                  rightPanel={
+                    <SRLEditor
+                      value={srlCode}
+                      onChange={setSrlCode}
+                      validationMessages={result?.messages}
                       theme={theme}
-                      highlightedRule={highlightedGrammarRule}
-                      onRuleHover={handleDiagramRuleHover}
-                      onRuleClick={handleDiagramRuleClick}
+                      onEditorReady={handleSRLEditorReady}
+                      onGrammarRuleChange={showDiagramPanel ? handleGrammarRuleChange : undefined}
                     />
-                  ) : (
-                    <SyntaxBreakdown
-                      code={srlCode}
-                      theme={theme}
-                      onTokenHover={handleTokenHover}
-                      onTokenClick={handleTokenClick}
-                    />
-                  )
-                }
-              />
-            </Panel>
+                  }
+                  bottomPanel={
+                    showDiagramPanel ? (
+                      <SyntaxDiagramPanel
+                        theme={theme}
+                        highlightedRule={highlightedGrammarRule}
+                        onRuleHover={handleDiagramRuleHover}
+                        onRuleClick={handleDiagramRuleClick}
+                      />
+                    ) : (
+                      <SyntaxBreakdown
+                        code={srlCode}
+                        theme={theme}
+                        onTokenHover={handleTokenHover}
+                        onTokenClick={handleTokenClick}
+                      />
+                    )
+                  }
+                />
+              </Panel>
 
-            <ResizeHandle direction="horizontal" theme={theme} />
+              <ResizeHandle direction="horizontal" theme={theme} />
 
-            {/* Right panel with tabs for Validation and Inferred Triples */}
-            <Panel defaultSize={25} minSize={15} maxSize={50}>
-              <div className={`h-full flex flex-col ${
-                theme === 'dark' ? 'bg-zinc-900 border-l border-zinc-800' : 'bg-white border-l border-zinc-200'
-              }`}>
-                {/* Tab headers */}
-                <div className={`shrink-0 flex border-b ${
-                  theme === 'dark' ? 'border-zinc-700/50 bg-zinc-900' : 'border-zinc-200 bg-zinc-50'
+              {/* Right panel with tabs for Validation and Inferred Triples */}
+              <Panel defaultSize={25} minSize={15} maxSize={50}>
+                <div className={`h-full flex flex-col ${
+                  theme === 'dark' ? 'bg-zinc-900 border-l border-zinc-800' : 'bg-white border-l border-zinc-200'
                 }`}>
-                  <button
-                    onClick={() => setActiveRightTab('validation')}
-                    className={`flex-1 px-3 py-2 text-xs font-medium transition-colors relative ${
-                      activeRightTab === 'validation'
-                        ? theme === 'dark' ? 'text-zinc-100' : 'text-zinc-900'
-                        : theme === 'dark' ? 'text-zinc-500 hover:text-zinc-300' : 'text-zinc-500 hover:text-zinc-700'
-                    }`}
-                  >
-                    <span className="flex items-center justify-center gap-1.5">
-                      <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                        <path d="M9 12l2 2 4-4" />
-                        <circle cx="12" cy="12" r="10" />
-                      </svg>
-                      Validation
-                      {result && (
-                        <span className={`text-[10px] px-1 py-0.5 rounded ${
-                          result.isValid
-                            ? theme === 'dark' ? 'bg-green-500/20 text-green-400' : 'bg-green-100 text-green-700'
-                            : theme === 'dark' ? 'bg-red-500/20 text-red-400' : 'bg-red-100 text-red-700'
-                        }`}>
-                          {result.messages.filter(m => m.type === 'error').length || '✓'}
-                        </span>
+                  {/* Tab headers */}
+                  <div className={`shrink-0 flex border-b ${
+                    theme === 'dark' ? 'border-zinc-700/50 bg-zinc-900' : 'border-zinc-200 bg-zinc-50'
+                  }`}>
+                    <button
+                      onClick={() => setActiveRightTab('validation')}
+                      className={`flex-1 px-3 py-2 text-xs font-medium transition-colors relative ${
+                        activeRightTab === 'validation'
+                          ? theme === 'dark' ? 'text-zinc-100' : 'text-zinc-900'
+                          : theme === 'dark' ? 'text-zinc-500 hover:text-zinc-300' : 'text-zinc-500 hover:text-zinc-700'
+                      }`}
+                    >
+                      <span className="flex items-center justify-center gap-1.5">
+                        <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                          <path d="M9 12l2 2 4-4" />
+                          <circle cx="12" cy="12" r="10" />
+                        </svg>
+                        Validation
+                        {result && (
+                          <span className={`text-[10px] px-1 py-0.5 rounded ${
+                            result.isValid
+                              ? theme === 'dark' ? 'bg-green-500/20 text-green-400' : 'bg-green-100 text-green-700'
+                              : theme === 'dark' ? 'bg-red-500/20 text-red-400' : 'bg-red-100 text-red-700'
+                          }`}>
+                            {result.messages.filter(m => m.type === 'error').length || '✓'}
+                          </span>
+                        )}
+                      </span>
+                      {activeRightTab === 'validation' && (
+                        <div className={`absolute bottom-0 left-0 right-0 h-0.5 ${
+                          theme === 'dark' ? 'bg-blue-500' : 'bg-blue-600'
+                        }`} />
                       )}
-                    </span>
-                    {activeRightTab === 'validation' && (
-                      <div className={`absolute bottom-0 left-0 right-0 h-0.5 ${
-                        theme === 'dark' ? 'bg-blue-500' : 'bg-blue-600'
-                      }`} />
-                    )}
-                  </button>
-                  <button
-                    onClick={() => setActiveRightTab('inferred')}
-                    className={`flex-1 px-3 py-2 text-xs font-medium transition-colors relative ${
-                      activeRightTab === 'inferred'
-                        ? theme === 'dark' ? 'text-zinc-100' : 'text-zinc-900'
-                        : theme === 'dark' ? 'text-zinc-500 hover:text-zinc-300' : 'text-zinc-500 hover:text-zinc-700'
-                    }`}
-                  >
-                    <span className="flex items-center justify-center gap-1.5">
-                      <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                        <path d="M13 10V3L4 14h7v7l9-11h-7z" />
-                      </svg>
-                      Inferred
-                      {executionResult && executionResult.errors.length === 0 && (
-                        <span className={`text-[10px] px-1 py-0.5 rounded ${
-                          theme === 'dark' ? 'bg-green-500/20 text-green-400' : 'bg-green-100 text-green-700'
-                        }`}>
-                          {executionResult.inferredTriples.length}
-                        </span>
+                    </button>
+                    <button
+                      onClick={() => setActiveRightTab('inferred')}
+                      className={`flex-1 px-3 py-2 text-xs font-medium transition-colors relative ${
+                        activeRightTab === 'inferred'
+                          ? theme === 'dark' ? 'text-zinc-100' : 'text-zinc-900'
+                          : theme === 'dark' ? 'text-zinc-500 hover:text-zinc-300' : 'text-zinc-500 hover:text-zinc-700'
+                      }`}
+                    >
+                      <span className="flex items-center justify-center gap-1.5">
+                        <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                          <path d="M13 10V3L4 14h7v7l9-11h-7z" />
+                        </svg>
+                        Inferred
+                        {executionResult && executionResult.errors.length === 0 && (
+                          <span className={`text-[10px] px-1 py-0.5 rounded ${
+                            theme === 'dark' ? 'bg-green-500/20 text-green-400' : 'bg-green-100 text-green-700'
+                          }`}>
+                            {executionResult.inferredTriples.length}
+                          </span>
+                        )}
+                      </span>
+                      {activeRightTab === 'inferred' && (
+                        <div className={`absolute bottom-0 left-0 right-0 h-0.5 ${
+                          theme === 'dark' ? 'bg-green-500' : 'bg-green-600'
+                        }`} />
                       )}
-                    </span>
-                    {activeRightTab === 'inferred' && (
-                      <div className={`absolute bottom-0 left-0 right-0 h-0.5 ${
-                        theme === 'dark' ? 'bg-green-500' : 'bg-green-600'
-                      }`} />
-                    )}
-                  </button>
-                </div>
+                    </button>
+                  </div>
 
-                {/* Tab content */}
-                <div className="flex-1 overflow-hidden">
-                  {activeRightTab === 'validation' ? (
-                    <ValidationPanel result={result} isValidating={isValidating} theme={theme} />
-                  ) : (
-                    <InferredTriplesPanel
-                      result={executionResult}
-                      prefixes={prefixes}
-                      theme={theme}
-                      onRuleHover={handleRuleHover}
-                      onTripleHover={handleTripleHover}
-                      highlightedRuleIndex={highlightedRuleIndex}
-                    />
-                  )}
+                  {/* Tab content */}
+                  <div className="flex-1 overflow-hidden">
+                    {activeRightTab === 'validation' ? (
+                      <ValidationPanel result={result} isValidating={isValidating} theme={theme} />
+                    ) : (
+                      <InferredTriplesPanel
+                        result={executionResult}
+                        prefixes={prefixes}
+                        theme={theme}
+                        onRuleHover={handleRuleHover}
+                        onTripleHover={handleTripleHover}
+                        highlightedRuleIndex={highlightedRuleIndex}
+                      />
+                    )}
+                  </div>
                 </div>
-              </div>
-            </Panel>
-          </PanelGroup>
+              </Panel>
+            </PanelGroup>
+          ) : (
+            // Node Expressions Mode Layout
+            <PanelGroup direction="horizontal" className="h-full">
+              {/* Expression editor and data side-by-side */}
+              <Panel defaultSize={60} minSize={30}>
+                <ResizablePanels
+                  theme={theme}
+                  leftTitle="Data Graph (Turtle)"
+                  rightTitle="Node Expression (Turtle)"
+                  showBottom={false}
+                  defaultLeftSize={50}
+                  defaultBottomSize={0}
+                  leftPanel={
+                    <RDFEditor value={nodeExprData} onChange={setNodeExprData} theme={theme} />
+                  }
+                  rightPanel={
+                    <NodeExprEditor value={nodeExprCode} onChange={setNodeExprCode} theme={theme} />
+                  }
+                  bottomPanel={null}
+                />
+              </Panel>
+
+              <ResizeHandle direction="horizontal" theme={theme} />
+
+              {/* Result panel */}
+              <Panel defaultSize={40} minSize={20} maxSize={60}>
+                <div className={`h-full flex flex-col ${
+                  theme === 'dark' ? 'bg-zinc-900 border-l border-zinc-800' : 'bg-white border-l border-zinc-200'
+                }`}>
+                  <div className={`shrink-0 px-3 py-2 border-b ${
+                    theme === 'dark' ? 'border-zinc-700/50 bg-zinc-900' : 'border-zinc-200 bg-zinc-50'
+                  }`}>
+                    <span className={`text-xs font-medium ${
+                      theme === 'dark' ? 'text-zinc-300' : 'text-zinc-700'
+                    }`}>
+                      Evaluation Results
+                    </span>
+                  </div>
+                  <div className="flex-1 overflow-hidden">
+                    <NodeExprResultPanel
+                      trace={nodeExprEvaluation.trace}
+                      error={nodeExprEvaluation.error}
+                      isEvaluating={nodeExprEvaluation.isEvaluating}
+                      prefixes={nodeExprValidation.prefixes}
+                      theme={theme}
+                    />
+                  </div>
+                </div>
+              </Panel>
+            </PanelGroup>
+          )}
         </div>
       </div>
 
@@ -535,46 +730,83 @@ export function Playground() {
             : 'bg-white border-zinc-200 text-zinc-500'
         }`}
       >
-        <span>SHACL 1.2 Rules • Shape Rule Language</span>
+        <span>
+          {mode === 'srl' 
+            ? 'SHACL 1.2 Rules • Shape Rule Language' 
+            : 'SHACL 1.2 • Node Expressions'}
+        </span>
         <div className="flex items-center gap-4">
-          {isExecuting && (
-            <span className="flex items-center gap-1">
-              <svg className="w-3 h-3 animate-spin" viewBox="0 0 24 24" fill="none">
-                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-              </svg>
-              Executing rules...
-            </span>
-          )}
-          {executionResult && !isExecuting && (
-            <span className={executionResult.errors.length === 0 ? 'text-green-500' : 'text-orange-400'}>
-              {executionResult.inferredTriples.length} inferred • {executionResult.executionTime.toFixed(1)}ms
-            </span>
-          )}
-          {executionError && !isExecuting && (
-            <span className="text-red-400" title={executionError}>
-              Execution error
-            </span>
-          )}
-          <span className={theme === 'dark' ? 'text-zinc-600' : 'text-zinc-400'}>|</span>
-          {isValidating && (
-            <span className="flex items-center gap-1">
-              <svg className="w-3 h-3 animate-spin" viewBox="0 0 24 24" fill="none">
-                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-              </svg>
-              Validating...
-            </span>
-          )}
-          {result && !isValidating && (
-            <span className={result.isValid ? 'text-green-500' : 'text-red-400'}>
-              {result.isValid 
-                ? '✓ Valid' 
-                : `${result.messages?.filter(m => m.type === 'error').length || 0} errors`}
-            </span>
-          )}
-          {result?.parseTime !== undefined && (
-            <span>Parsed in {result.parseTime.toFixed(1)}ms</span>
+          {mode === 'srl' ? (
+            <>
+              {isExecuting && (
+                <span className="flex items-center gap-1">
+                  <svg className="w-3 h-3 animate-spin" viewBox="0 0 24 24" fill="none">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                  </svg>
+                  Executing rules...
+                </span>
+              )}
+              {executionResult && !isExecuting && (
+                <span className={executionResult.errors.length === 0 ? 'text-green-500' : 'text-orange-400'}>
+                  {executionResult.inferredTriples.length} inferred • {executionResult.executionTime.toFixed(1)}ms
+                </span>
+              )}
+              {executionError && !isExecuting && (
+                <span className="text-red-400" title={executionError}>
+                  Execution error
+                </span>
+              )}
+              <span className={theme === 'dark' ? 'text-zinc-600' : 'text-zinc-400'}>|</span>
+              {isValidating && (
+                <span className="flex items-center gap-1">
+                  <svg className="w-3 h-3 animate-spin" viewBox="0 0 24 24" fill="none">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                  </svg>
+                  Validating...
+                </span>
+              )}
+              {result && !isValidating && (
+                <span className={result.isValid ? 'text-green-500' : 'text-red-400'}>
+                  {result.isValid 
+                    ? '✓ Valid' 
+                    : `${result.messages?.filter(m => m.type === 'error').length || 0} errors`}
+                </span>
+              )}
+              {result?.parseTime !== undefined && (
+                <span>Parsed in {result.parseTime.toFixed(1)}ms</span>
+              )}
+            </>
+          ) : (
+            <>
+              {nodeExprEvaluation.isEvaluating && (
+                <span className="flex items-center gap-1">
+                  <svg className="w-3 h-3 animate-spin" viewBox="0 0 24 24" fill="none">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                  </svg>
+                  Evaluating...
+                </span>
+              )}
+              {nodeExprEvaluation.trace && !nodeExprEvaluation.isEvaluating && (
+                <span className="text-purple-400">
+                  {nodeExprEvaluation.trace.result.length} results • {nodeExprEvaluation.trace.executionTime.toFixed(1)}ms
+                </span>
+              )}
+              {nodeExprEvaluation.error && !nodeExprEvaluation.isEvaluating && (
+                <span className="text-red-400" title={nodeExprEvaluation.error}>
+                  Evaluation error
+                </span>
+              )}
+              <span className={theme === 'dark' ? 'text-zinc-600' : 'text-zinc-400'}>|</span>
+              <span className={nodeExprValidation.isValid ? 'text-green-500' : 'text-red-400'}>
+                {nodeExprValidation.isValid 
+                  ? '✓ Valid' 
+                  : `${nodeExprValidation.parseErrors.length} errors`}
+              </span>
+              <span>{nodeExprValidation.expressions.size} expressions</span>
+            </>
           )}
         </div>
       </footer>

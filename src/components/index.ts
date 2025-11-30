@@ -8,3 +8,9 @@ export { ResizablePanels } from './ResizablePanels';
 export { SyntaxBreakdown } from './SyntaxBreakdown';
 export { InferredTriplesPanel } from './InferredTriplesPanel';
 export { SyntaxDiagramPanel } from './SyntaxDiagramPanel';
+
+// Node Expressions mode components
+export { ModeSelector, type PlaygroundMode } from './ModeSelector';
+export { NodeExprEditor } from './NodeExprEditor';
+export { NodeExprResultPanel } from './NodeExprResultPanel';
+export { NodeExprExamplesSidebar } from './NodeExprExamplesSidebar';
