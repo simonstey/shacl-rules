@@ -34,7 +34,9 @@ SHACL Rules Playground is an interactive editor for writing and testing **SHACL 
 - **Monaco Integration** — Syntax highlighting, hover documentation, and code completion for SRL
 - **Multiple Rule Forms** — Support for `RULE...WHERE`, `IF...THEN`, and datalog-style (`:-`) syntax
 - **Shorthand Declarations** — `TRANSITIVE`, `SYMMETRIC`, and `INVERSE` property declarations
-- **Theme Support** — Light and dark themes with resizable panels
+- **Light & Dark Themes** — Token-based theming (CSS variables) that persists your choice and seeds from your OS preference on first load
+- **Responsive Layout** — Resizable panels that stack vertically on narrow viewports; the examples sidebar auto-collapses
+- **Accessible** — WCAG 2.1 AA: sufficient contrast in both themes, keyboard-operable controls with visible focus, ARIA labels/roles, and `prefers-reduced-motion` support
 
 ## Getting Started
 
@@ -221,7 +223,12 @@ src/
 │   │   └── stratifier.ts
 │   ├── validation/         # Semantic analysis
 │   ├── monaco/             # Monaco language support
-│   └── examples/           # Built-in examples
+│   ├── examples/           # Built-in examples
+│   └── useMediaQuery.ts    # SSR-safe responsive breakpoint hook
+├── app/
+│   └── globals.css         # Theme tokens (CSS variables) + base styles
+PRODUCT.md                  # Strategic design context (register, users, brand)
+DESIGN.md                   # Visual design system (tokens, typography, components)
 ```
 
 ## Built With
