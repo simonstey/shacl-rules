@@ -8,7 +8,7 @@ export {
   type VariableTerm,
   type TriplePattern,
   type FilterElement,
-  type BindElement,
+  type AssignmentElement,
   type NegationElement,
   type BodyElement,
   type RuleHead,

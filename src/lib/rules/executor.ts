@@ -1,28 +1,24 @@
-import { Store, Quad, Parser as N3Parser, NamedNode, Literal, BlankNode, DefaultGraph } from 'n3';
-import { 
-  RuleSet, 
-  Rule, 
-  TriplePattern, 
-  BodyElement, 
+import { Store, Quad, Parser as N3Parser, NamedNode, Literal, BlankNode } from 'n3';
+import {
+  RuleSet,
+  Rule,
+  TriplePattern,
+  BodyElement,
   Declaration,
-  NegationElement,
   SourceLocation,
   RDFTerm
 } from '../srl/ast';
-import { 
-  PatternMatcher, 
-  SolutionMapping, 
-  instantiateTriple, 
+import {
+  SolutionMapping,
+  instantiateTriple,
   quadToString,
   substitutePattern,
   joinSolutions,
-  termToN3,
-  n3TermToRDFTerm,
   isVariable,
   isRDFTerm
 } from './pattern-matcher';
-import { evaluateFilter, evaluateExpression, resultToTerm, setCurrentStore } from './expression-evaluator';
-import { stratifyRules, StratifiedRule } from './stratifier';
+import { evaluateFilter, evaluateExpression, resultToTerm, setCurrentStore, setCurrentNow } from './expression-evaluator';
+import { stratifyRules, StratificationLayer, StratifiedRule } from './stratifier';
 
 export interface InferredTriple {
   quad: Quad;
@@ -164,34 +160,9 @@ export function expandDeclarations(declarations: Declaration[], prefixes: Map<st
         });
         break;
       }
-      
-      case 'reflexive': {
-        // REFLEXIVE(p) expands to: RULE { ?x p ?x } WHERE { ?x p ?y }
-        const prop: RDFTerm = { termType: 'iri', value: decl.property };
-        expandedRules.push({
-          type: 'rule',
-          name: `REFLEXIVE(${decl.property})`,
-          head: {
-            patterns: [{
-              subject: { termType: 'variable', value: 'x' },
-              predicate: prop,
-              object: { termType: 'variable', value: 'x' },
-            }]
-          },
-          body: {
-            elements: [{
-              subject: { termType: 'variable', value: 'x' },
-              predicate: prop,
-              object: { termType: 'variable', value: 'y' },
-            }]
-          },
-          location: decl.location,
-        });
-        break;
-      }
     }
   }
-  
+
   return expandedRules;
 }
 
@@ -199,95 +170,53 @@ function isTriplePattern(element: BodyElement): element is TriplePattern {
   return 'subject' in element && 'predicate' in element && 'object' in element;
 }
 
-function extractBodyComponents(elements: BodyElement[]): {
-  patterns: TriplePattern[];
-  filters: { expression: import('../srl/ast').Expression }[];
-  bindings: { variable: string; expression: import('../srl/ast').Expression }[];
-  negations: NegationElement[];
-} {
-  const patterns: TriplePattern[] = [];
-  const filters: { expression: import('../srl/ast').Expression }[] = [];
-  const bindings: { variable: string; expression: import('../srl/ast').Expression }[] = [];
-  const negations: NegationElement[] = [];
-  
-  for (const element of elements) {
-    if (isTriplePattern(element)) {
-      patterns.push(element);
-    } else if (element.type === 'filter') {
-      filters.push({ expression: element.expression });
-    } else if (element.type === 'bind') {
-      bindings.push({ variable: element.variable, expression: element.expression });
-    } else if (element.type === 'negation') {
-      negations.push(element);
-    }
-  }
-  
-  return { patterns, filters, bindings, negations };
-}
-
-function evaluateRuleBody(
-  rule: Rule,
+// Evaluate a body element sequence left-to-right (spec §6.4), folding each
+// element into the running solution set. Order matters: a FILTER or SET only
+// sees variables bound by strictly-earlier elements, so grouping by kind would
+// mis-evaluate e.g. `SET(?x := …) FILTER(?x > 0)`.
+function evaluateElements(
+  elements: BodyElement[],
+  initial: SolutionMapping[],
   store: Store
 ): SolutionMapping[] {
-  const { patterns, filters, bindings, negations } = extractBodyComponents(rule.body.elements);
-  
-  let solutions = joinSolutions([{}], patterns, store);
-  
-  for (const filter of filters) {
-    solutions = solutions.filter(sol => evaluateFilter(filter.expression, sol));
-  }
-  
-  for (const binding of bindings) {
-    solutions = solutions.map(sol => {
-      const result = evaluateExpression(binding.expression, sol);
-      const term = resultToTerm(result);
-      if (term) {
-        return { ...sol, [binding.variable]: term };
+  let solutions = initial;
+
+  for (const element of elements) {
+    if (isTriplePattern(element)) {
+      // Join this pattern against the current solutions (substituting bound vars).
+      const next: SolutionMapping[] = [];
+      for (const sol of solutions) {
+        const substituted = substitutePattern(element, sol);
+        for (const match of joinSolutions([{}], [substituted], store)) {
+          next.push({ ...sol, ...match });
+        }
       }
-      return sol;
-    }).filter(sol => binding.variable in sol);
+      solutions = next;
+    } else if (element.type === 'filter') {
+      solutions = solutions.filter(sol => evaluateFilter(element.expression, sol));
+    } else if (element.type === 'assignment') {
+      const { variable, expression } = element;
+      solutions = solutions
+        .map(sol => {
+          const term = resultToTerm(evaluateExpression(expression, sol));
+          return term ? { ...sol, [variable]: term } : sol;
+        })
+        // SET drops the solution when the expression errors (spec §3.9).
+        .filter(sol => variable in sol);
+    } else if (element.type === 'negation') {
+      // Negation-as-failure: keep μ iff seeding the negation body with {μ}
+      // yields no solutions.
+      solutions = solutions.filter(
+        sol => evaluateElements(element.patterns, [sol], store).length === 0
+      );
+    }
   }
-  
-  for (const negation of negations) {
-    solutions = solutions.filter(sol => {
-      // Evaluate the negation block as a mini rule body
-      const negElements = negation.patterns;
-      const { patterns: negPatterns, filters: negFilters, bindings: negBindings } = extractBodyComponents(negElements);
-      
-      // Start with the current solution and substitute variables
-      const substituted = negPatterns.map(p => substitutePattern(p, sol));
-      
-      // Find matches for the patterns
-      let negSolutions = joinSolutions([{}], substituted, store);
-      
-      // Apply filters inside the negation
-      for (const filter of negFilters) {
-        negSolutions = negSolutions.filter(negSol => {
-          // Merge the outer solution with the inner solution for filter evaluation
-          const mergedSol = { ...sol, ...negSol };
-          return evaluateFilter(filter.expression, mergedSol);
-        });
-      }
-      
-      // Apply bindings inside the negation
-      for (const binding of negBindings) {
-        negSolutions = negSolutions.map(negSol => {
-          const mergedSol = { ...sol, ...negSol };
-          const result = evaluateExpression(binding.expression, mergedSol);
-          const term = resultToTerm(result);
-          if (term) {
-            return { ...negSol, [binding.variable]: term };
-          }
-          return negSol;
-        }).filter(negSol => binding.variable in negSol);
-      }
-      
-      // Negation succeeds if no solutions remain after filtering
-      return negSolutions.length === 0;
-    });
-  }
-  
+
   return solutions;
+}
+
+function evaluateRuleBody(rule: Rule, store: Store): SolutionMapping[] {
+  return evaluateElements(rule.body.elements, [{}], store);
 }
 
 function generateRuleName(rule: Rule, index: number): string {
@@ -317,7 +246,8 @@ export function executeRules(
   
   const store = new Store();
   const baseTriples: Quad[] = [];
-  
+
+  // G0 — the base graph from the RDF editor.
   try {
     const parser = new N3Parser();
     const quads = parser.parse(rdfData);
@@ -328,24 +258,10 @@ export function executeRules(
   } catch (e) {
     errors.push(`Failed to parse RDF data: ${e instanceof Error ? e.message : String(e)}`);
   }
-  
-  for (const dataBlock of ruleSet.dataBlocks) {
-    for (const pattern of dataBlock.patterns) {
-      // Data block patterns should not have path expressions, only RDF terms
-      const pred = pattern.predicate;
-      if (!isVariable(pattern.subject) && isRDFTerm(pred) && !isVariable(pred) && !isVariable(pattern.object)) {
-        const quad = instantiateTriple(pattern, {});
-        if (quad) {
-          store.addQuad(quad);
-          baseTriples.push(quad);
-        }
-      }
-    }
-  }
-  
+
   const expandedRules = expandDeclarations(ruleSet.declarations, ruleSet.prefixes);
   const allRules = [...ruleSet.rules, ...expandedRules];
-  
+
   const ruleInfos: RuleInfo[] = allRules.map((rule, index) => ({
     index,
     name: generateRuleName(rule, index),
@@ -353,68 +269,138 @@ export function executeRules(
     head: rule.head.patterns,
     originalRule: rule,
   }));
-  
-  const stratified = stratifyRules(allRules);
-  
+
+  let stratified: StratificationLayer[] = [];
+  try {
+    stratified = stratifyRules(allRules);
+  } catch (e) {
+    errors.push(`Stratification failed: ${e instanceof Error ? e.message : String(e)}`);
+  }
+
   const inferredTriples: InferredTriple[] = [];
   const seenTriples = new Set<string>();
-  
+
   for (const quad of baseTriples) {
     seenTriples.add(quadToString(quad));
   }
-  
-  // Set the current store for EXISTS evaluation
+
+  // DATA blocks seed the inference graph GI = { t ∈ D | t ∉ G0 } (spec §6.5):
+  // ground DATA triples not already in the base graph count as inferred output.
+  // They are attributed to a synthetic "DATA" pseudo-rule so the results panel
+  // can group them.
+  if (ruleSet.dataBlocks.length > 0) {
+    const firstBlock = ruleSet.dataBlocks[0];
+    const dataRuleInfo: RuleInfo = {
+      index: allRules.length,
+      name: 'DATA block',
+      location: firstBlock.location,
+      head: [],
+      originalRule: { type: 'rule', head: { patterns: [] }, body: { elements: [] } },
+    };
+    let hasDataTriple = false;
+
+    for (const dataBlock of ruleSet.dataBlocks) {
+      for (const pattern of dataBlock.patterns) {
+        // DATA must be ground: no variables, no property paths.
+        const pred = pattern.predicate;
+        if (!isVariable(pattern.subject) && isRDFTerm(pred) && !isVariable(pred) && !isVariable(pattern.object)) {
+          const quad = instantiateTriple(pattern, {});
+          if (quad) {
+            store.addQuad(quad);
+            const quadStr = quadToString(quad);
+            if (!seenTriples.has(quadStr)) {
+              seenTriples.add(quadStr);
+              hasDataTriple = true;
+              inferredTriples.push({
+                quad,
+                quadString: quadStr,
+                sourceRule: dataRuleInfo,
+                iteration: 0,
+              });
+            }
+          }
+        }
+      }
+    }
+
+    if (hasDataTriple) {
+      ruleInfos.push(dataRuleInfo);
+    }
+  }
+
+  // Set the current store for pattern evaluation, and pin NOW() to a single
+  // instant for the whole rule-set evaluation (spec: NOW is constant per run).
   setCurrentStore(store);
-  
+  setCurrentNow(new Date());
+
   let totalIterations = 0;
-  
+
+  // Instantiate a rule's head for every solution; record any genuinely new
+  // inferred triple. Returns true if at least one new triple was produced.
+  const applyRule = (stratRule: StratifiedRule): boolean => {
+    const rule = stratRule.rule;
+    const ruleInfo = ruleInfos[stratRule.originalIndex];
+    let produced = false;
+
+    try {
+      const solutions = evaluateRuleBody(rule, store);
+
+      for (const solution of solutions) {
+        for (const headPattern of rule.head.patterns) {
+          const quad = instantiateTriple(headPattern, solution);
+          if (quad) {
+            const quadStr = quadToString(quad);
+            if (!seenTriples.has(quadStr)) {
+              seenTriples.add(quadStr);
+              store.addQuad(quad);
+              inferredTriples.push({
+                quad,
+                quadString: quadStr,
+                sourceRule: ruleInfo,
+                iteration: totalIterations,
+              });
+              produced = true;
+            }
+          }
+        }
+      }
+    } catch (e) {
+      errors.push(`Error evaluating rule "${ruleInfo.name}": ${e instanceof Error ? e.message : String(e)}`);
+    }
+
+    return produced;
+  };
+
   for (const layer of stratified) {
+    // Run-once rules (assignment or blank-node head) fire exactly once, before
+    // the general rules of the same stratum iterate to a fixpoint.
+    totalIterations++;
+    for (const stratRule of layer.once) {
+      applyRule(stratRule);
+    }
+
     let layerIteration = 0;
-    let changed = true;
-    
+    let changed = layer.general.length > 0;
+
     while (changed && layerIteration < (opts.maxIterations || 100)) {
       changed = false;
       layerIteration++;
       totalIterations++;
-      
-      for (const stratRule of layer) {
-        const rule = stratRule.rule;
-        const ruleInfo = ruleInfos[stratRule.originalIndex];
-        
-        try {
-          const solutions = evaluateRuleBody(rule, store);
-          
-          for (const solution of solutions) {
-            for (const headPattern of rule.head.patterns) {
-              const quad = instantiateTriple(headPattern, solution);
-              if (quad) {
-                const quadStr = quadToString(quad);
-                if (!seenTriples.has(quadStr)) {
-                  seenTriples.add(quadStr);
-                  store.addQuad(quad);
-                  inferredTriples.push({
-                    quad,
-                    quadString: quadStr,
-                    sourceRule: ruleInfo,
-                    iteration: totalIterations,
-                  });
-                  changed = true;
-                }
-              }
-            }
-          }
-        } catch (e) {
-          errors.push(`Error evaluating rule "${ruleInfo.name}": ${e instanceof Error ? e.message : String(e)}`);
+
+      for (const stratRule of layer.general) {
+        if (applyRule(stratRule)) {
+          changed = true;
         }
       }
     }
   }
-  
+
   const executionTime = performance.now() - startTime;
-  
-  // Clear the current store reference
+
+  // Clear the module-level execution state.
   setCurrentStore(null);
-  
+  setCurrentNow(null);
+
   return {
     inferredTriples,
     baseTriples,

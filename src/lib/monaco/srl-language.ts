@@ -54,35 +54,34 @@ export const srlMonarchTokensProvider: MonacoEditor.languages.IMonarchLanguage =
       "PREFIX",
       "BASE",
       "FILTER",
-      "BIND",
-      "AS",
       "NOT",
+      "SET",
       "IN",
-      "EXISTS",
       "TRANSITIVE",
       "SYMMETRIC",
       "INVERSE",
-      "REFLEXIVE",
       "VERSION",
       "IMPORTS",
     ],
 
+    // The complete SHACL 1.2 Rules built-in function set (grammar [121]).
     builtinFunctions: [
       "STR",
       "LANG",
       "LANGMATCHES",
+      "LANGDIR",
       "DATATYPE",
-      "BOUND",
       "IRI",
       "URI",
       "BNODE",
-      "RAND",
       "ABS",
       "CEIL",
       "FLOOR",
       "ROUND",
       "CONCAT",
+      "SUBSTR",
       "STRLEN",
+      "REPLACE",
       "UCASE",
       "LCASE",
       "ENCODE_FOR_URI",
@@ -102,14 +101,9 @@ export const srlMonarchTokensProvider: MonacoEditor.languages.IMonarchLanguage =
       "NOW",
       "UUID",
       "STRUUID",
-      "MD5",
-      "SHA1",
-      "SHA256",
-      "SHA384",
-      "SHA512",
-      "COALESCE",
       "IF",
       "STRLANG",
+      "STRLANGDIR",
       "STRDT",
       "SAMETERM",
       "ISIRI",
@@ -117,18 +111,14 @@ export const srlMonarchTokensProvider: MonacoEditor.languages.IMonarchLanguage =
       "ISBLANK",
       "ISLITERAL",
       "ISNUMERIC",
+      "HASLANG",
+      "HASLANGDIR",
       "REGEX",
-      "SUBSTR",
-      "REPLACE",
-      "EXISTS",
-      "NOT EXISTS",
-      "COUNT",
-      "SUM",
-      "MIN",
-      "MAX",
-      "AVG",
-      "SAMPLE",
-      "GROUP_CONCAT",
+      "ISTRIPLE",
+      "TRIPLE",
+      "SUBJECT",
+      "PREDICATE",
+      "OBJECT",
     ],
 
     typeKeywords: ["true", "false", "a"],
@@ -148,7 +138,7 @@ export const srlMonarchTokensProvider: MonacoEditor.languages.IMonarchLanguage =
       "||",
       "!",
       "^^",
-      ":-",
+      ":=",
     ],
 
     symbols: /[=><!~?:&|+\-*\/\^%]+/,
@@ -201,7 +191,7 @@ export const srlMonarchTokensProvider: MonacoEditor.languages.IMonarchLanguage =
 
         // Delimiters and operators
         [/[{}()\[\]]/, "@brackets"],
-        [/:-/, "operator.clause"],
+        [/:=/, "operator.assign"],
         [/\^\^/, "operator.datatype"],
         [/[;,.]/, "delimiter"],
 
@@ -307,7 +297,7 @@ export const srlTheme: MonacoEditor.editor.IStandaloneThemeData = {
 
     // Operators - bright white
     { token: "operator", foreground: "E5E7EB" },
-    { token: "operator.clause", foreground: "D19AFF", fontStyle: "bold" },
+    { token: "operator.assign", foreground: "D19AFF", fontStyle: "bold" },
     { token: "operator.datatype", foreground: "E5E7EB" },
 
     // Delimiters - subtle gray
@@ -379,7 +369,7 @@ export const srlLightTheme: MonacoEditor.editor.IStandaloneThemeData = {
 
     // Operators
     { token: "operator", foreground: "374151" },
-    { token: "operator.clause", foreground: "7C3AED", fontStyle: "bold" },
+    { token: "operator.assign", foreground: "7C3AED", fontStyle: "bold" },
     { token: "operator.datatype", foreground: "374151" },
 
     // Delimiters
@@ -522,8 +512,8 @@ export function registerSRLLanguage(monaco: Monaco) {
         RULE: {
           title: "Rule Declaration",
           description:
-            "Declares a rule that derives new triples from matched patterns.",
-          syntax: "RULE { head-pattern } WHERE { body-pattern }",
+            "Declares a rule that derives new triples from matched patterns. An optional IRI right after RULE names the rule.",
+          syntax: "RULE iri? { head-template } WHERE { body-pattern }",
         },
         WHERE: {
           title: "Where Clause",
@@ -561,26 +551,22 @@ export function registerSRLLanguage(monaco: Monaco) {
           description: "Restricts solutions based on a boolean expression.",
           syntax: "FILTER(expression)",
         },
-        BIND: {
-          title: "Variable Binding",
-          description: "Binds the result of an expression to a variable.",
-          syntax: "BIND(expression AS ?variable)",
+        SET: {
+          title: "Variable Assignment",
+          description:
+            "Assigns the result of an expression to a new variable. An evaluation error drops the current solution.",
+          syntax: "SET(?variable := expression)",
         },
         NOT: {
           title: "Negation",
           description:
-            "Negation-as-failure: matches if the pattern does NOT exist.",
+            "Negation-as-failure: matches if the pattern does NOT exist. The body allows only triple patterns and FILTER.",
           syntax: "NOT { pattern }",
         },
         IN: {
           title: "Set Membership",
           description: "Tests if a value is in a list of values.",
           syntax: "?var IN (value1, value2, ...)",
-        },
-        EXISTS: {
-          title: "Pattern Existence",
-          description: "Tests if a pattern exists in the data graph.",
-          syntax: "EXISTS { pattern }",
         },
         TRANSITIVE: {
           title: "Transitive Property",
@@ -590,18 +576,14 @@ export function registerSRLLanguage(monaco: Monaco) {
         },
         SYMMETRIC: {
           title: "Symmetric Property",
-          description: "Declares a property as symmetric (if A→B, then B→A).",
-          syntax: "SYMMETRIC(property)",
+          description:
+            "Declares a property as symmetric (if A→B, then B→A). Note the postfix syntax: the IRI precedes the keyword.",
+          syntax: "(property) SYMMETRIC",
         },
         INVERSE: {
           title: "Inverse Properties",
           description: "Declares two properties as inverses of each other.",
           syntax: "INVERSE(property1, property2)",
-        },
-        REFLEXIVE: {
-          title: "Reflexive Property",
-          description: "Declares a property as reflexive (for any A with this property, A→A).",
-          syntax: "REFLEXIVE(property)",
         },
       };
 
@@ -625,13 +607,12 @@ export function registerSRLLanguage(monaco: Monaco) {
         };
       }
 
-      // Built-in function documentation
+      // Built-in function documentation (SHACL 1.2 Rules production [121])
       const functionDocs: Record<string, string> = {
         STR: "Converts a term to its lexical string form.",
         LANG: "Returns the language tag of a literal.",
         LANGMATCHES: "Tests if a language tag matches a pattern.",
         DATATYPE: "Returns the datatype IRI of a literal.",
-        BOUND: "Tests if a variable is bound.",
         CONCAT: "Concatenates string arguments.",
         STRLEN: "Returns the length of a string.",
         UCASE: "Converts a string to uppercase.",
@@ -646,14 +627,12 @@ export function registerSRLLanguage(monaco: Monaco) {
         REGEX: "Tests if a string matches a regular expression.",
         ENCODE_FOR_URI: "Encodes a string for use in a URI.",
         IF: "Conditional expression: IF(cond, then, else).",
-        COALESCE: "Returns the first bound argument.",
         SAMETERM: "Tests if two terms are the same RDF term.",
         ABS: "Returns the absolute value of a number.",
         CEIL: "Returns the ceiling of a number.",
         FLOOR: "Returns the floor of a number.",
         ROUND: "Rounds a number to the nearest integer.",
-        RAND: "Returns a random number between 0 and 1.",
-        NOW: "Returns the current dateTime.",
+        NOW: "Returns the current dateTime (constant per rule-set evaluation).",
         YEAR: "Extracts the year from a dateTime.",
         MONTH: "Extracts the month from a dateTime.",
         DAY: "Extracts the day from a dateTime.",
@@ -664,11 +643,6 @@ export function registerSRLLanguage(monaco: Monaco) {
         TZ: "Extracts the timezone as a string.",
         UUID: "Generates a fresh UUID IRI.",
         STRUUID: "Generates a fresh UUID as a string.",
-        MD5: "Returns MD5 hash of a string.",
-        SHA1: "Returns SHA1 hash of a string.",
-        SHA256: "Returns SHA256 hash of a string.",
-        SHA384: "Returns SHA384 hash of a string.",
-        SHA512: "Returns SHA512 hash of a string.",
         IRI: "Constructs an IRI from a string.",
         URI: "Constructs an IRI from a string (alias for IRI).",
         BNODE: "Constructs a blank node.",
@@ -678,7 +652,6 @@ export function registerSRLLanguage(monaco: Monaco) {
         ISBLANK: "Tests if a term is a blank node.",
         ISLITERAL: "Tests if a term is a literal.",
         ISNUMERIC: "Tests if a term is a numeric value.",
-        EXISTS: "Tests if a pattern exists in the graph.",
       };
 
       if (functionDocs[upperWord]) {
@@ -723,15 +696,12 @@ export function registerSRLLanguage(monaco: Monaco) {
         "PREFIX",
         "BASE",
         "FILTER",
-        "BIND",
-        "AS",
+        "SET",
         "NOT",
         "IN",
-        "EXISTS",
         "TRANSITIVE",
         "SYMMETRIC",
         "INVERSE",
-        "REFLEXIVE",
         "VERSION",
         "IMPORTS",
       ];
@@ -740,8 +710,8 @@ export function registerSRLLanguage(monaco: Monaco) {
         "STR",
         "LANG",
         "LANGMATCHES",
+        "LANGDIR",
         "DATATYPE",
-        "BOUND",
         "CONCAT",
         "STRLEN",
         "UCASE",
@@ -756,13 +726,11 @@ export function registerSRLLanguage(monaco: Monaco) {
         "REGEX",
         "ENCODE_FOR_URI",
         "IF",
-        "COALESCE",
         "SAMETERM",
         "ABS",
         "CEIL",
         "FLOOR",
         "ROUND",
-        "RAND",
         "NOW",
         "YEAR",
         "MONTH",
@@ -774,20 +742,23 @@ export function registerSRLLanguage(monaco: Monaco) {
         "TZ",
         "UUID",
         "STRUUID",
-        "MD5",
-        "SHA1",
-        "SHA256",
-        "SHA384",
-        "SHA512",
         "IRI",
         "URI",
         "BNODE",
         "STRDT",
         "STRLANG",
+        "STRLANGDIR",
         "ISIRI",
         "ISBLANK",
         "ISLITERAL",
         "ISNUMERIC",
+        "HASLANG",
+        "HASLANGDIR",
+        "ISTRIPLE",
+        "TRIPLE",
+        "SUBJECT",
+        "PREDICATE",
+        "OBJECT",
       ];
 
       const suggestions: MonacoEditor.languages.CompletionItem[] = [
@@ -842,12 +813,12 @@ export function registerSRLLanguage(monaco: Monaco) {
           range,
         },
         {
-          label: "BIND assignment",
+          label: "SET assignment",
           kind: monaco.languages.CompletionItemKind.Snippet,
-          insertText: "BIND(${1:expression} AS ${2:?var})",
+          insertText: "SET(${1:?var} := ${2:expression})",
           insertTextRules:
             monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
-          documentation: "Bind an expression result to a variable",
+          documentation: "Assign an expression result to a new variable",
           range,
         },
         {
@@ -871,10 +842,10 @@ export function registerSRLLanguage(monaco: Monaco) {
         {
           label: "SYMMETRIC declaration",
           kind: monaco.languages.CompletionItemKind.Snippet,
-          insertText: "SYMMETRIC(${1:property})",
+          insertText: "(${1:property}) SYMMETRIC",
           insertTextRules:
             monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
-          documentation: "Declare a symmetric property",
+          documentation: "Declare a symmetric property (postfix syntax)",
           range,
         },
         {
@@ -884,33 +855,6 @@ export function registerSRLLanguage(monaco: Monaco) {
           insertTextRules:
             monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
           documentation: "Declare inverse properties",
-          range,
-        },
-        {
-          label: "REFLEXIVE declaration",
-          kind: monaco.languages.CompletionItemKind.Snippet,
-          insertText: "REFLEXIVE(${1:property})",
-          insertTextRules:
-            monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
-          documentation: "Declare a reflexive property",
-          range,
-        },
-        {
-          label: "EXISTS pattern",
-          kind: monaco.languages.CompletionItemKind.Snippet,
-          insertText: "EXISTS { ${0} }",
-          insertTextRules:
-            monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
-          documentation: "Test if a pattern exists",
-          range,
-        },
-        {
-          label: "NOT EXISTS pattern",
-          kind: monaco.languages.CompletionItemKind.Snippet,
-          insertText: "NOT EXISTS { ${0} }",
-          insertTextRules:
-            monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
-          documentation: "Test if a pattern does not exist",
           range,
         },
         {

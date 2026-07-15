@@ -14,25 +14,35 @@ export const Comment = createToken({
 });
 
 // Keywords
-export const Rule = createToken({ name: 'Rule', pattern: /RULE/i });
-export const Where = createToken({ name: 'Where', pattern: /WHERE/i });
-export const If = createToken({ name: 'If', pattern: /IF/i });
-export const Then = createToken({ name: 'Then', pattern: /THEN/i });
-export const Data = createToken({ name: 'Data', pattern: /DATA/i });
-export const Prefix = createToken({ name: 'Prefix', pattern: /PREFIX/i });
-export const Base = createToken({ name: 'Base', pattern: /BASE/i });
-export const Filter = createToken({ name: 'Filter', pattern: /FILTER/i });
-export const Bind = createToken({ name: 'Bind', pattern: /BIND/i });
-export const As = createToken({ name: 'As', pattern: /AS/i });
-export const Not = createToken({ name: 'Not', pattern: /NOT/i });
-export const Transitive = createToken({ name: 'Transitive', pattern: /TRANSITIVE/i });
-export const Symmetric = createToken({ name: 'Symmetric', pattern: /SYMMETRIC/i });
-export const Inverse = createToken({ name: 'Inverse', pattern: /INVERSE/i });
-export const Version = createToken({ name: 'Version', pattern: /VERSION/i });
-export const Imports = createToken({ name: 'Imports', pattern: /IMPORTS/i });
-export const Reflexive = createToken({ name: 'Reflexive', pattern: /REFLEXIVE/i });
-export const In = createToken({ name: 'In', pattern: /IN/i });
-export const Exists = createToken({ name: 'Exists', pattern: /EXISTS/i });
+//
+// `keyword(name, literal)` bakes in the case-insensitive flag and a trailing
+// `(?![\w:-])` boundary lookahead, so a keyword only matches when it is NOT
+// immediately followed by an identifier character, a prefixed-name separator, or
+// a hyphen. Without the boundary a bare `/RULE/i` would mis-lex the prefix of an
+// identifier or prefixed name (e.g. `SET` inside `SETTING`, `IN` inside
+// `:inCoreDept`, `TRANSITIVE` as the prefix of `transitive:foo`). Keeping the
+// lookahead in the factory means every keyword gets it by construction. (`RdfType`
+// uses `\b` for the same reason.)
+function keyword(name: string, literal: string) {
+  return createToken({ name, pattern: new RegExp(`${literal}(?![\\w:-])`, 'i') });
+}
+
+export const Rule = keyword('Rule', 'RULE');
+export const Where = keyword('Where', 'WHERE');
+export const If = keyword('If', 'IF');
+export const Then = keyword('Then', 'THEN');
+export const Data = keyword('Data', 'DATA');
+export const Prefix = keyword('Prefix', 'PREFIX');
+export const Base = keyword('Base', 'BASE');
+export const Filter = keyword('Filter', 'FILTER');
+export const Not = keyword('Not', 'NOT');
+export const Set = keyword('Set', 'SET');
+export const Transitive = keyword('Transitive', 'TRANSITIVE');
+export const Symmetric = keyword('Symmetric', 'SYMMETRIC');
+export const Inverse = keyword('Inverse', 'INVERSE');
+export const Version = keyword('Version', 'VERSION');
+export const Imports = keyword('Imports', 'IMPORTS');
+export const In = keyword('In', 'IN');
 
 // RDF Type
 export const RdfType = createToken({ name: 'RdfType', pattern: /a\b/ });
@@ -44,8 +54,6 @@ export const LParen = createToken({ name: 'LParen', pattern: /\(/ });
 export const RParen = createToken({ name: 'RParen', pattern: /\)/ });
 export const LBracket = createToken({ name: 'LBracket', pattern: /\[/ });
 export const RBracket = createToken({ name: 'RBracket', pattern: /\]/ });
-export const LAngle = createToken({ name: 'LAngle', pattern: /<(?!<)/ });
-export const RAngle = createToken({ name: 'RAngle', pattern: />(?!>)/ });
 export const DoubleLeftAngle = createToken({ name: 'DoubleLeftAngle', pattern: /<</ });
 export const DoubleRightAngle = createToken({ name: 'DoubleRightAngle', pattern: />>/ });
 
@@ -53,8 +61,8 @@ export const DoubleRightAngle = createToken({ name: 'DoubleRightAngle', pattern:
 export const Dot = createToken({ name: 'Dot', pattern: /\./ });
 export const Comma = createToken({ name: 'Comma', pattern: /,/ });
 export const Semicolon = createToken({ name: 'Semicolon', pattern: /;/ });
+export const Assign = createToken({ name: 'Assign', pattern: /:=/ });
 export const Colon = createToken({ name: 'Colon', pattern: /:(?!:)/ });
-export const ColonMinus = createToken({ name: 'ColonMinus', pattern: /:-/ });
 export const DoubleCaret = createToken({ name: 'DoubleCaret', pattern: /\^\^/ });
 export const Caret = createToken({ name: 'Caret', pattern: /\^/ });
 export const Pipe = createToken({ name: 'Pipe', pattern: /\|/ });
@@ -132,10 +140,11 @@ export const StringLiteralLongSingleQuote = createToken({
   pattern: /'''([^'\\]|\\.|'(?!''))*'''/,
 });
 
-// Language Tag
+// Language Tag (RDF 1.2 allows an optional base-direction suffix `--ltr`/`--rtl`,
+// which must be lowercase). Ordered so the `--dir` suffix wins over a `-subtag`.
 export const LangTag = createToken({
   name: 'LangTag',
-  pattern: /@[a-zA-Z]+(-[a-zA-Z0-9]+)*/,
+  pattern: /@[a-zA-Z]+(--(ltr|rtl)|-[a-zA-Z0-9]+)*/,
 });
 
 // Numbers
@@ -155,8 +164,8 @@ export const Integer = createToken({
 });
 
 // Boolean
-export const True = createToken({ name: 'True', pattern: /true/i });
-export const False = createToken({ name: 'False', pattern: /false/i });
+export const True = keyword('True', 'true');
+export const False = keyword('False', 'false');
 
 // Identifier (for function names, etc.)
 export const Identifier = createToken({
@@ -171,7 +180,7 @@ export const allTokens = [
   // Multi-char operators first
   DoubleLeftAngle,
   DoubleRightAngle,
-  ColonMinus,
+  Assign,
   DoubleCaret,
   NotEquals,
   LessOrEqual,
@@ -187,15 +196,12 @@ export const allTokens = [
   Prefix,
   Base,
   Filter,
-  Bind,
-  As,
   Not,
+  Set,
   Transitive,
   Symmetric,
   Inverse,
-  Reflexive,
   In,
-  Exists,
   Version,
   Imports,
   True,
@@ -226,17 +232,17 @@ export const allTokens = [
   RParen,
   LBracket,
   RBracket,
-  LAngle,
-  RAngle,
   // Punctuation
   Dot,
   Comma,
   Semicolon,
   Colon,
   Caret,
-  Pipe,
-  // Operators
+  // Operators — LessThan/GreaterThan must be lexable for comparison FILTERs
+  // (full IRIs `<…>` are matched earlier, so a bare `<`/`>` is a comparison).
   Equals,
+  LessThan,
+  GreaterThan,
   Plus,
   Minus,
   Asterisk,

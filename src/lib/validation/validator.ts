@@ -1,6 +1,34 @@
 import { parseSRL } from '../srl/parser';
 import { SRLLexer } from '../srl/tokens';
 import { IToken } from 'chevrotain';
+import {
+  buildAST,
+  RuleSet,
+  Rule,
+  BodyElement,
+  TriplePattern,
+  Expression,
+  SourceLocation,
+} from '../srl/ast';
+import { expandDeclarations } from '../rules/executor';
+import { isStratifiable } from '../rules/stratifier';
+import { getPatternVariables, isTriplePattern } from '../rules/pattern-matcher';
+
+// The complete SHACL 1.2 Rules built-in function set (grammar production [121]).
+// A bareword function call whose name is not in this set is an error. Notably
+// BOUND, RAND, COALESCE, and the hash functions (MD5/SHA*) are NOT included.
+const SPEC_BUILTINS = new Set(
+  [
+    'STR', 'LANG', 'LANGMATCHES', 'LANGDIR', 'DATATYPE', 'IRI', 'URI', 'BNODE',
+    'ABS', 'CEIL', 'FLOOR', 'ROUND', 'CONCAT', 'SUBSTR', 'STRLEN', 'REPLACE',
+    'UCASE', 'LCASE', 'ENCODE_FOR_URI', 'CONTAINS', 'STRSTARTS', 'STRENDS',
+    'STRBEFORE', 'STRAFTER', 'YEAR', 'MONTH', 'DAY', 'HOURS', 'MINUTES',
+    'SECONDS', 'TIMEZONE', 'TZ', 'NOW', 'UUID', 'STRUUID', 'IF', 'STRLANG',
+    'STRLANGDIR', 'STRDT', 'SAMETERM', 'ISIRI', 'ISURI', 'ISBLANK', 'ISLITERAL',
+    'ISNUMERIC', 'HASLANG', 'HASLANGDIR', 'REGEX', 'ISTRIPLE', 'TRIPLE',
+    'SUBJECT', 'PREDICATE', 'OBJECT',
+  ]
+);
 
 export interface ValidationMessage {
   type: 'error' | 'warning' | 'info';
@@ -34,13 +62,6 @@ interface PrefixDeclaration {
   iri: string;
   line: number;
   column: number;
-}
-
-interface VariableUsage {
-  name: string;
-  line: number;
-  column: number;
-  isInHead: boolean;
 }
 
 function extractPrefixes(tokens: IToken[]): PrefixDeclaration[] {
@@ -81,131 +102,15 @@ function extractPrefixes(tokens: IToken[]): PrefixDeclaration[] {
   return prefixes;
 }
 
-// Debug logging - set to true to enable verbose output
-const DEBUG_VALIDATOR = true;//typeof window !== 'undefined' && (window as unknown as { DEBUG_SRL_VALIDATOR?: boolean }).DEBUG_SRL_VALIDATOR === true;
-
-function debugLog(...args: unknown[]): void {
-  if (DEBUG_VALIDATOR) {
-    console.log('[SRL Validator]', ...args);
-  }
-}
-
-function extractVariablesAndPrefixUsages(tokens: IToken[]): { 
-  variables: VariableUsage[];
-  prefixUsages: Array<{ prefix: string; line: number; column: number; fullName: string }>;
-} {
-  const variables: VariableUsage[] = [];
+// Token-level prefix-usage scan: every `prefix:local` occurrence, so we can
+// flag prefixes used but never declared. Cheap and independent of the AST.
+function extractPrefixUsages(
+  tokens: IToken[]
+): Array<{ prefix: string; line: number; column: number; fullName: string }> {
   const prefixUsages: Array<{ prefix: string; line: number; column: number; fullName: string }> = [];
-  
-  // Track rule context with proper brace counting
-  // Rule forms:
-  //   RULE { head } WHERE { body }  - head in first block, body in second
-  //   IF { body } THEN { head }     - body in first block, head in second
-  //   { head } :- { body }          - head in first block, body in second
-  
-  type RuleForm = 'rule-where' | 'if-then' | 'datalog' | null;
-  let ruleForm: RuleForm = null;
-  let ruleStartBraceDepth = 0;
-  let blockIndex = 0; // 0 = first block, 1 = second block
-  let braceDepth = 0;
-  let inBlock = false;
-  
-  debugLog('=== Starting extractVariablesAndPrefixUsages ===');
-  debugLog('Total tokens:', tokens.length);
-  
-  for (let i = 0; i < tokens.length; i++) {
-    const token = tokens[i];
-    const tokenType = token.tokenType?.name;
-    
-    // Detect rule form start
-    if (tokenType === 'Rule') {
-      debugLog(`[${i}] Found RULE keyword at line ${token.startLine}`);
-      ruleForm = 'rule-where';
-      blockIndex = 0;
-      ruleStartBraceDepth = braceDepth;
-    } else if (tokenType === 'If') {
-      debugLog(`[${i}] Found IF keyword at line ${token.startLine}`);
-      ruleForm = 'if-then';
-      blockIndex = 0;
-      ruleStartBraceDepth = braceDepth;
-    } else if (tokenType === 'LBrace' && ruleForm === null) {
-      // Potential datalog-style rule starting with { head }
-      // Look ahead for :- to confirm
-      let hasColonMinus = false;
-      let depth = 1;
-      for (let j = i + 1; j < tokens.length && depth > 0; j++) {
-        const tt = tokens[j].tokenType?.name;
-        if (tt === 'LBrace') depth++;
-        else if (tt === 'RBrace') depth--;
-        else if (depth === 0 || (depth === 1 && tt === 'ColonMinus')) {
-          // Check if :- follows the closing brace
-          if (j + 1 < tokens.length && tokens[j]?.tokenType?.name === 'RBrace') {
-            for (let k = j + 1; k < tokens.length; k++) {
-              const nextTT = tokens[k].tokenType?.name;
-              if (nextTT === 'WhiteSpace') continue;
-              if (nextTT === 'ColonMinus') {
-                hasColonMinus = true;
-              }
-              break;
-            }
-          }
-          break;
-        }
-      }
-      if (hasColonMinus) {
-        ruleForm = 'datalog';
-        blockIndex = 0;
-        ruleStartBraceDepth = braceDepth;
-      }
-    }
-    
-    // Track transitions between blocks
-    if (tokenType === 'Where' && ruleForm === 'rule-where') {
-      debugLog(`[${i}] Found WHERE keyword, transitioning to body block`);
-      blockIndex = 1;
-    } else if (tokenType === 'Then' && ruleForm === 'if-then') {
-      debugLog(`[${i}] Found THEN keyword, transitioning to head block`);
-      blockIndex = 1;
-    } else if (tokenType === 'ColonMinus' && ruleForm === 'datalog') {
-      debugLog(`[${i}] Found :- operator, transitioning to body block`);
-      blockIndex = 1;
-    }
-    
-    // Track brace depth
-    if (tokenType === 'LBrace') {
-      braceDepth++;
-      inBlock = true;
-      debugLog(`[${i}] LBrace: braceDepth=${braceDepth}, ruleForm=${ruleForm}, blockIndex=${blockIndex}`);
-    } else if (tokenType === 'RBrace') {
-      braceDepth--;
-      debugLog(`[${i}] RBrace: braceDepth=${braceDepth}, ruleStartBraceDepth=${ruleStartBraceDepth}, blockIndex=${blockIndex}`);
-      if (braceDepth === ruleStartBraceDepth && blockIndex === 1) {
-        debugLog(`[${i}] End of rule detected, resetting state`);
-        // End of rule
-        ruleForm = null;
-        blockIndex = 0;
-        inBlock = false;
-      }
-    }
-    
-    // Determine if current position is in head or body
-    const isInHead = ruleForm !== null && inBlock && (
-      (ruleForm === 'rule-where' && blockIndex === 0) ||
-      (ruleForm === 'if-then' && blockIndex === 1) ||
-      (ruleForm === 'datalog' && blockIndex === 0)
-    );
-    
-    if (tokenType === 'QuestionVar' || tokenType === 'DollarVar') {
-      debugLog(`[${i}] Variable ${token.image} at line ${token.startLine}: ruleForm=${ruleForm}, blockIndex=${blockIndex}, inBlock=${inBlock}, isInHead=${isInHead}`);
-      variables.push({
-        name: token.image,
-        line: token.startLine || 1,
-        column: token.startColumn || 1,
-        isInHead,
-      });
-    }
-    
-    if (tokenType === 'PrefixedName') {
+
+  for (const token of tokens) {
+    if (token.tokenType?.name === 'PrefixedName') {
       const match = token.image.match(/^([a-zA-Z_][a-zA-Z0-9_-]*):/);
       if (match) {
         prefixUsages.push({
@@ -217,21 +122,19 @@ function extractVariablesAndPrefixUsages(tokens: IToken[]): {
       }
     }
   }
-  
-  return { variables, prefixUsages };
+
+  return prefixUsages;
 }
 
-function checkSemanticIssues(tokens: IToken[], prefixes: PrefixDeclaration[]): ValidationMessage[] {
+// Prefix diagnostics (undefined-prefix warnings, duplicate-prefix notices) run
+// off the token stream so they work even when the AST fails to build.
+function checkPrefixIssues(tokens: IToken[], prefixes: PrefixDeclaration[]): ValidationMessage[] {
   const messages: ValidationMessage[] = [];
-  const { variables, prefixUsages } = extractVariablesAndPrefixUsages(tokens);
-  
-  debugLog('=== Variables extracted ===');
-  debugLog('All variables:', variables.map(v => ({ name: v.name, line: v.line, isInHead: v.isInHead })));
-  
+  const prefixUsages = extractPrefixUsages(tokens);
+
   const declaredPrefixes = new Set(prefixes.map(p => p.prefix));
   declaredPrefixes.add(''); // Empty prefix is always valid if declared
-  
-  // Check for undefined prefixes
+
   for (const usage of prefixUsages) {
     if (!declaredPrefixes.has(usage.prefix)) {
       messages.push({
@@ -244,43 +147,12 @@ function checkSemanticIssues(tokens: IToken[], prefixes: PrefixDeclaration[]): V
       });
     }
   }
-  
-  // Check for variables used in head but not defined in body
-  const ruleGroups = groupVariablesByRule(tokens, variables);
-  debugLog('=== Rule groups ===');
-  debugLog('Number of rule groups:', ruleGroups.length);
-  ruleGroups.forEach((group, idx) => {
-    debugLog(`Group ${idx}:`, group.map(v => ({ name: v.name, line: v.line, isInHead: v.isInHead })));
-  });
-  
-  for (const group of ruleGroups) {
-    const bodyVars = new Set(group.filter(v => !v.isInHead).map(v => v.name));
-    const headVars = group.filter(v => v.isInHead);
-    
-    debugLog('Processing group - bodyVars:', [...bodyVars], 'headVars:', headVars.map(v => v.name));
-    
-    for (const headVar of headVars) {
-      if (!bodyVars.has(headVar.name)) {
-        debugLog(`WARNING: ${headVar.name} not found in bodyVars`);
-        messages.push({
-          type: 'warning',
-          message: `Variable '${headVar.name}' in rule head is not bound in rule body`,
-          startLine: headVar.line,
-          startColumn: headVar.column,
-          endLine: headVar.line,
-          endColumn: headVar.column + headVar.name.length,
-        });
-      }
-    }
-  }
-  
-  // Check for duplicate prefix declarations
+
   const prefixCounts = new Map<string, number>();
   for (const prefix of prefixes) {
-    const key = prefix.prefix;
-    prefixCounts.set(key, (prefixCounts.get(key) || 0) + 1);
+    prefixCounts.set(prefix.prefix, (prefixCounts.get(prefix.prefix) || 0) + 1);
   }
-  
+
   for (const prefix of prefixes) {
     if ((prefixCounts.get(prefix.prefix) || 0) > 1) {
       messages.push({
@@ -289,97 +161,175 @@ function checkSemanticIssues(tokens: IToken[], prefixes: PrefixDeclaration[]): V
         startLine: prefix.line,
         startColumn: prefix.column,
         endLine: prefix.line,
-        endColumn: prefix.column + 6, // LENGTH of "PREFIX"
+        endColumn: prefix.column + 6, // length of "PREFIX"
       });
     }
   }
-  
+
   return messages;
 }
 
-function groupVariablesByRule(tokens: IToken[], variables: VariableUsage[]): VariableUsage[][] {
-  const groups: VariableUsage[][] = [];
-  let currentRuleStart = -1;
-  let currentRuleEnd = -1;
-  let braceDepth = 0;
-  let ruleStartBraceDepth = 0;
-  let blockCount = 0; // Track how many brace blocks we've seen in current rule
-  
-  debugLog('=== groupVariablesByRule ===');
-  
-  for (let i = 0; i < tokens.length; i++) {
-    const token = tokens[i];
-    const tokenType = token.tokenType?.name;
-    
-    if (tokenType === 'Rule' || tokenType === 'If') {
-      debugLog(`[${i}] Rule/If at offset ${token.startOffset}, braceDepth=${braceDepth}`);
-      currentRuleStart = token.startOffset || 0;
-      ruleStartBraceDepth = braceDepth;
-      blockCount = 0;
-    } else if (tokenType === 'LBrace') {
-      braceDepth++;
-      if (currentRuleStart >= 0) {
-        debugLog(`[${i}] LBrace in rule, braceDepth=${braceDepth}, blockCount=${blockCount}`);
-      }
-    } else if (tokenType === 'RBrace') {
-      braceDepth--;
-      if (currentRuleStart >= 0 && braceDepth === ruleStartBraceDepth) {
-        blockCount++;
-        debugLog(`[${i}] RBrace closes block, braceDepth=${braceDepth}, blockCount=${blockCount}`);
-        
-        // A complete rule has 2 brace blocks (head and body)
-        if (blockCount >= 2) {
-          currentRuleEnd = token.endOffset || token.startOffset || 0;
-          debugLog(`Rule complete: start=${currentRuleStart}, end=${currentRuleEnd}`);
-          
-          // Collect variables in this range
-          const ruleVars = variables.filter(v => {
-            const varOffset = getOffsetForLine(tokens, v.line, v.column);
-            const inRange = varOffset >= currentRuleStart && varOffset <= currentRuleEnd;
-            debugLog(`  Variable ${v.name} at offset ${varOffset}: inRange=${inRange}`);
-            return inRange;
-          });
-          
-          if (ruleVars.length > 0) {
-            debugLog(`Adding group with ${ruleVars.length} variables`);
-            groups.push(ruleVars);
-          }
-          
-          currentRuleStart = -1;
-          blockCount = 0;
-        }
-      }
-    }
-  }
-  
-  debugLog(`Total groups: ${groups.length}`);
-  return groups;
+// ---------------------------------------------------------------------------
+// AST-based well-formedness (SHACL 1.2 Rules §4.2 "well-formed rule")
+// ---------------------------------------------------------------------------
+
+// Variables occurring in a triple pattern (subject / predicate / object).
+function variablesInPattern(pattern: TriplePattern): Set<string> {
+  return new Set(getPatternVariables(pattern));
 }
 
-function getOffsetForLine(tokens: IToken[], line: number, column: number): number {
-  for (const token of tokens) {
-    if ((token.startLine || 1) === line && (token.startColumn || 1) === column) {
-      return token.startOffset;
+// Single traversal of an Expression tree: collects referenced variables into
+// `vars` and every function-call name into `fns`.
+function walkExpression(expr: Expression, vars: Set<string>, fns: string[]): void {
+  switch (expr.type) {
+    case 'variable':
+      vars.add(expr.name);
+      break;
+    case 'binary':
+      walkExpression(expr.left, vars, fns);
+      walkExpression(expr.right, vars, fns);
+      break;
+    case 'unary':
+      walkExpression(expr.operand, vars, fns);
+      break;
+    case 'function':
+      fns.push(expr.name);
+      for (const arg of expr.args) walkExpression(arg, vars, fns);
+      break;
+    case 'in':
+      walkExpression(expr.value, vars, fns);
+      for (const item of expr.list) walkExpression(item, vars, fns);
+      break;
+    default:
+      break;
+  }
+}
+
+function locToMessage(
+  type: ValidationMessage['type'],
+  message: string,
+  location?: SourceLocation
+): ValidationMessage {
+  const line = location?.startLine ?? 1;
+  const col = location?.startColumn ?? 1;
+  return {
+    type,
+    message,
+    startLine: line,
+    startColumn: col,
+    endLine: location?.endLine ?? line,
+    endColumn: location?.endColumn ?? col + 1,
+  };
+}
+
+// Validate a FILTER/SET expression: every referenced variable must be in
+// `vPrev`, and every function name must be a spec [121] built-in. `kind` is the
+// label used in the unbound-variable message ("FILTER" / "SET expression").
+function checkExpression(
+  expr: Expression,
+  vPrev: Set<string>,
+  kind: string,
+  location: SourceLocation | undefined,
+  messages: ValidationMessage[]
+): void {
+  const vars = new Set<string>();
+  const fns: string[] = [];
+  walkExpression(expr, vars, fns);
+
+  for (const v of vars) {
+    if (!vPrev.has(v)) {
+      messages.push(
+        locToMessage('error', `${kind} references variable '?${v}' not bound by an earlier body element`, location)
+      );
     }
   }
-  // Fallback: find any token on the same line with closest column
-  let bestMatch: IToken | null = null;
-  let bestDistance = Infinity;
-  for (const token of tokens) {
-    if ((token.startLine || 1) === line) {
-      const distance = Math.abs((token.startColumn || 1) - column);
-      if (distance < bestDistance) {
-        bestDistance = distance;
-        bestMatch = token;
+  for (const fn of fns) {
+    if (!SPEC_BUILTINS.has(fn.toUpperCase())) {
+      messages.push(
+        locToMessage('error', `Unknown function '${fn}' — not a SHACL 1.2 Rules built-in`, location)
+      );
+    }
+  }
+}
+
+// Verify a body element sequence is well-formed given the initial variable set
+// `v0`; returns V_all (v0 ∪ every variable the sequence defines). Records errors.
+function checkWellFormedSequence(
+  elements: BodyElement[],
+  v0: Set<string>,
+  messages: ValidationMessage[]
+): Set<string> {
+  const vPrev = new Set(v0); // V_{i-1}
+
+  for (const element of elements) {
+    if (isTriplePattern(element)) {
+      for (const v of variablesInPattern(element)) vPrev.add(v);
+    } else if (element.type === 'filter') {
+      checkExpression(element.expression, vPrev, 'FILTER', element.location, messages);
+    } else if (element.type === 'assignment') {
+      checkExpression(element.expression, vPrev, 'SET expression', element.location, messages);
+      // Single-assignment: the assigned variable must be new.
+      if (vPrev.has(element.variable)) {
+        messages.push(
+          locToMessage('error', `SET variable '?${element.variable}' is already bound earlier (assignments must introduce a new variable)`, element.location)
+        );
+      }
+      vPrev.add(element.variable);
+    } else if (element.type === 'negation') {
+      // The negation body must be well-formed given V_{i-1}; variables bound
+      // only inside the negation do not leak into the outer scope.
+      checkWellFormedSequence(element.patterns, new Set(vPrev), messages);
+    }
+  }
+
+  return vPrev;
+}
+
+function checkRuleWellFormedness(rule: Rule, messages: ValidationMessage[]): void {
+  const vAll = checkWellFormedSequence(rule.body.elements, new Set(), messages);
+
+  const headVars = new Set<string>();
+  for (const template of rule.head.patterns) {
+    for (const v of variablesInPattern(template)) headVars.add(v);
+  }
+  for (const v of headVars) {
+    if (!vAll.has(v)) {
+      messages.push(
+        locToMessage('error', `Variable '?${v}' in rule head is not bound in rule body`, rule.location)
+      );
+    }
+  }
+}
+
+// AST-driven semantic checks: rule well-formedness, ground DATA blocks, and the
+// stratification condition. Runs only when the parse produced a clean CST.
+function checkAstSemantics(ruleSet: RuleSet): ValidationMessage[] {
+  const messages: ValidationMessage[] = [];
+
+  for (const rule of ruleSet.rules) {
+    checkRuleWellFormedness(rule, messages);
+  }
+
+  // DATA blocks must be ground — no variables in any position.
+  for (const block of ruleSet.dataBlocks) {
+    for (const triple of block.patterns) {
+      if (variablesInPattern(triple).size > 0) {
+        messages.push(
+          locToMessage('error', 'DATA blocks must be ground (no variables allowed)', triple.location ?? block.location)
+        );
       }
     }
   }
-  if (bestMatch) {
-    debugLog(`getOffsetForLine fallback: line=${line}, col=${column} -> matched token at col ${bestMatch.startColumn}, offset ${bestMatch.startOffset}`);
-    return bestMatch.startOffset;
+
+  // Stratification: declarations expand to synthetic rules, so check the full set.
+  const expanded = expandDeclarations(ruleSet.declarations, ruleSet.prefixes);
+  const allRules = [...ruleSet.rules, ...expanded];
+  const strat = isStratifiable(allRules);
+  if (!strat.stratifiable) {
+    messages.push(locToMessage('error', strat.reason ?? 'Rule set is not stratifiable'));
   }
-  debugLog(`getOffsetForLine: no match for line=${line}, col=${column}`);
-  return 0;
+
+  return messages;
 }
 
 export function validateSRL(code: string): ValidationResult {
@@ -418,11 +368,27 @@ export function validateSRL(code: string): ValidationResult {
       });
     }
     
-    // Run semantic analysis if no parse errors
-    if (parseResult.errors.length === 0) {
+    // Run semantic analysis if no lexer/parser errors.
+    if (lexResult.errors.length === 0 && parseResult.errors.length === 0) {
       const prefixes = extractPrefixes(parseResult.tokens);
-      const semanticMessages = checkSemanticIssues(parseResult.tokens, prefixes);
-      messages.push(...semanticMessages);
+      messages.push(...checkPrefixIssues(parseResult.tokens, prefixes));
+
+      // AST-based well-formedness + stratification. Guarded so a builder error
+      // (e.g. an unsupported-but-parseable construct) degrades to a diagnostic
+      // rather than crashing validation.
+      try {
+        const ruleSet = buildAST(code);
+        messages.push(...checkAstSemantics(ruleSet));
+      } catch (e) {
+        messages.push({
+          type: 'error',
+          message: e instanceof Error ? e.message : 'Failed to analyze rule set',
+          startLine: 1,
+          startColumn: 1,
+          endLine: 1,
+          endColumn: 1,
+        });
+      }
     }
   } catch (e) {
     messages.push({

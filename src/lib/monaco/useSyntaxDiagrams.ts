@@ -83,7 +83,7 @@ const KEYWORD_TO_RULE_MAP: Record<string, string> = {
   PREFIX: 'prefixDecl',
   BASE: 'baseDecl',
   FILTER: 'filterClause',
-  BIND: 'assignment',
+  SET: 'assignment',
   NOT: 'negation',
   TRANSITIVE: 'declaration',
   SYMMETRIC: 'declaration',
@@ -99,7 +99,7 @@ export function getGrammarRuleForKeyword(keyword: string): string | null {
 export function getGrammarRuleForContext(lineContent: string, column: number): string | null {
   const beforeCursor = lineContent.substring(0, column);
   
-  const keywordMatch = beforeCursor.match(/\b(RULE|WHERE|IF|THEN|DATA|PREFIX|BASE|FILTER|BIND|NOT|TRANSITIVE|SYMMETRIC|INVERSE|VERSION|IMPORTS)\b/gi);
+  const keywordMatch = beforeCursor.match(/\b(RULE|WHERE|IF|THEN|DATA|PREFIX|BASE|FILTER|SET|NOT|TRANSITIVE|SYMMETRIC|INVERSE|VERSION|IMPORTS)\b/gi);
   if (keywordMatch) {
     const lastKeyword = keywordMatch[keywordMatch.length - 1];
     return getGrammarRuleForKeyword(lastKeyword);

@@ -1,6 +1,7 @@
 import { CstParser, IRecognitionException, IToken, ISerializedGast } from 'chevrotain';
 import {
   allTokens,
+  SRLLexer,
   Rule,
   Where,
   If,
@@ -9,15 +10,12 @@ import {
   Prefix,
   Base,
   Filter,
-  Bind,
-  As,
   Not,
+  Set,
   Transitive,
   Symmetric,
   Inverse,
-  Reflexive,
   In,
-  Exists,
   Version,
   Imports,
   RdfType,
@@ -25,20 +23,13 @@ import {
   RBrace,
   LParen,
   RParen,
-  LBracket,
-  RBracket,
-  LAngle,
-  RAngle,
-  DoubleLeftAngle,
-  DoubleRightAngle,
   Dot,
   Comma,
   Semicolon,
   Colon,
-  ColonMinus,
+  Assign,
   DoubleCaret,
   Caret,
-  Pipe,
   Equals,
   NotEquals,
   LessThan,
@@ -49,11 +40,9 @@ import {
   Minus,
   Asterisk,
   Slash,
-  Percent,
   Ampersand,
   DoublePipe,
   Bang,
-  QuestionMark,
   QuestionVar,
   DollarVar,
   IRI,
@@ -125,24 +114,24 @@ export class SRLParser extends CstParser {
     this.CONSUME(IRI);
   });
 
-  // Rule = Rule1 | Rule2 | Rule3
+  // Rule = Rule1 | Rule2   (SHACL 1.2 Rules [11] — the datalog ':-' form is gone)
   private rule = this.RULE('rule', () => {
     this.OR([
       { ALT: () => this.SUBRULE(this.rule1) },
       { ALT: () => this.SUBRULE(this.rule2) },
-      { ALT: () => this.SUBRULE(this.rule3) },
     ]);
   });
 
-  // Rule1 = 'RULE' HeadTemplate 'WHERE' BodyPattern
+  // Rule1 = 'RULE' iri? HeadTemplate 'WHERE' BodyPattern  ([12] — optional naming IRI)
   private rule1 = this.RULE('rule1', () => {
     this.CONSUME(Rule);
+    this.OPTION(() => this.SUBRULE(this.iriRef));
     this.SUBRULE(this.headTemplate);
     this.CONSUME(Where);
     this.SUBRULE(this.bodyPattern);
   });
 
-  // Rule2 = 'IF' BodyPattern 'THEN' HeadTemplate
+  // Rule2 = 'IF' BodyPattern 'THEN' HeadTemplate  ([13])
   private rule2 = this.RULE('rule2', () => {
     this.CONSUME(If);
     this.SUBRULE(this.bodyPattern);
@@ -150,14 +139,9 @@ export class SRLParser extends CstParser {
     this.SUBRULE(this.headTemplate);
   });
 
-  // Rule3 = HeadTemplate ':-' BodyPattern
-  private rule3 = this.RULE('rule3', () => {
-    this.SUBRULE(this.headTemplate);
-    this.CONSUME(ColonMinus);
-    this.SUBRULE(this.bodyPattern);
-  });
-
-  // Declaration = 'TRANSITIVE' '(' iri ')' | 'SYMMETRIC' '(' iri ')' | 'INVERSE' '(' iri ',' iri ')' | 'REFLEXIVE' '(' iri ')'
+  // Declaration = 'TRANSITIVE' '(' iri ')' | '(' iri ')' 'SYMMETRIC' | 'INVERSE' '(' iri ',' iri ')'  ([27])
+  // Note: SYMMETRIC is POSTFIX (the IRI precedes the keyword); TRANSITIVE/INVERSE stay prefix.
+  // There is no REFLEXIVE declaration in SHACL 1.2 Rules.
   private declaration = this.RULE('declaration', () => {
     this.OR([
       {
@@ -169,11 +153,12 @@ export class SRLParser extends CstParser {
         },
       },
       {
+        // Postfix symmetric: '(' iri ')' SYMMETRIC
         ALT: () => {
-          this.CONSUME(Symmetric);
           this.CONSUME2(LParen);
           this.SUBRULE2(this.iriRef);
           this.CONSUME2(RParen);
+          this.CONSUME(Symmetric);
         },
       },
       {
@@ -186,78 +171,58 @@ export class SRLParser extends CstParser {
           this.CONSUME3(RParen);
         },
       },
-      {
-        ALT: () => {
-          this.CONSUME(Reflexive);
-          this.CONSUME4(LParen);
-          this.SUBRULE5(this.iriRef);
-          this.CONSUME4(RParen);
-        },
-      },
     ]);
   });
 
-  // Data = 'DATA' TriplesTemplateBlock
+  // Data = 'DATA' '{' TriplesTemplate? '}'  ([14]) — template family (no paths; must be ground)
   private dataBlock = this.RULE('dataBlock', () => {
     this.CONSUME(Data);
     this.SUBRULE(this.triplesTemplateBlock);
   });
 
-  // HeadTemplate = TriplesTemplateBlock
+  // HeadTemplate = '{' TriplesTemplate? '}'  ([15]) — template family (no property paths)
   private headTemplate = this.RULE('headTemplate', () => {
     this.SUBRULE(this.triplesTemplateBlock);
   });
 
-  // BodyPattern = '{' BodyPattern1 '}'
+  // BodyPattern = '{' BodyPattern1 '}'  ([16])
   private bodyPattern = this.RULE('bodyPattern', () => {
     this.CONSUME(LBrace);
     this.SUBRULE(this.bodyPattern1);
     this.CONSUME(RBrace);
   });
 
-  // BodyPattern1 = BodyBasic ( '.' BodyPattern1 )?
+  // BodyPattern1 = ( BodyBasic ( '.' BodyBasic? | BodyBasic )* )?  ([16])
+  // The dot separates triple patterns, but is OPTIONAL around FILTER/NOT/SET
+  // elements, so a not-triples element may be followed directly by more triples.
+  // The two MANY alternatives have disjoint first sets (Dot vs an element start),
+  // so there is no ambiguity, and every element stays in one ordered CST array.
   private bodyPattern1 = this.RULE('bodyPattern1', () => {
     this.OPTION(() => {
       this.SUBRULE(this.bodyBasic);
       this.MANY(() => {
-        this.CONSUME(Dot);
-        this.OPTION2(() => {
-          this.SUBRULE2(this.bodyBasic);
-        });
+        this.OR([
+          {
+            ALT: () => {
+              this.CONSUME(Dot);
+              this.OPTION2(() => this.SUBRULE2(this.bodyBasic));
+            },
+          },
+          { ALT: () => this.SUBRULE3(this.bodyBasic) },
+        ]);
       });
     });
   });
 
-  // BodyBasic = TriplesTemplate | BodyNotTriples
+  // BodyBasic = BodyNotTriples | TriplesSameSubjectPattern
   private bodyBasic = this.RULE('bodyBasic', () => {
     this.OR([
       { ALT: () => this.SUBRULE(this.bodyNotTriples) },
-      { ALT: () => this.SUBRULE(this.triplesSameSubjectWithContinuation) },
+      { ALT: () => this.SUBRULE(this.triplesSameSubjectPattern) },
     ]);
   });
 
-  // TriplesSameSubjectWithContinuation handles the subject and predicate-object list
-  // but NOT the trailing dot (which is handled by bodyPattern1)
-  private triplesSameSubjectWithContinuation = this.RULE('triplesSameSubjectWithContinuation', () => {
-    this.OR([
-      {
-        ALT: () => {
-          this.SUBRULE(this.varOrTerm);
-          this.SUBRULE(this.predicateObjectList);
-        },
-      },
-      {
-        ALT: () => {
-          this.SUBRULE(this.reifiedTriple);
-          this.OPTION(() => {
-            this.SUBRULE2(this.predicateObjectList);
-          });
-        },
-      },
-    ]);
-  });
-
-  // BodyNotTriples = Filter | Negation | Assignment
+  // BodyNotTriples = Filter | Negation | Assignment  ([17])
   private bodyNotTriples = this.RULE('bodyNotTriples', () => {
     this.OR([
       { ALT: () => this.SUBRULE(this.filterClause) },
@@ -266,39 +231,74 @@ export class SRLParser extends CstParser {
     ]);
   });
 
-  // Filter = 'FILTER' Constraint
+  // Filter = 'FILTER' Constraint  ([18])
   private filterClause = this.RULE('filterClause', () => {
     this.CONSUME(Filter);
     this.SUBRULE(this.constraint);
   });
 
-  // Negation = 'NOT' '{' BodyBasic '}'
+  // Negation = 'NOT' '{' BodyBasicSeq '}'  ([23])
+  // A negation body admits triple patterns and FILTER only — no nested NOT, no SET.
   private negation = this.RULE('negation', () => {
     this.CONSUME(Not);
     this.CONSUME(LBrace);
-    this.SUBRULE(this.bodyPattern1);
+    this.SUBRULE(this.bodyBasicSeq);
     this.CONSUME(RBrace);
   });
 
-  // Assignment = 'BIND' '(' Expression 'AS' Var ')'
+  // BodyBasicSeq = ( BodyBasicElement ( '.' BodyBasicElement? )* )?  ([24])
+  private bodyBasicSeq = this.RULE('bodyBasicSeq', () => {
+    this.OPTION(() => {
+      this.SUBRULE(this.bodyBasicElement);
+      this.MANY(() => {
+        this.CONSUME(Dot);
+        this.OPTION2(() => {
+          this.SUBRULE2(this.bodyBasicElement);
+        });
+      });
+    });
+  });
+
+  // BodyBasicElement = Filter | TriplesSameSubjectPattern  ([25] — filters only, no NOT/SET)
+  private bodyBasicElement = this.RULE('bodyBasicElement', () => {
+    this.OR([
+      { ALT: () => this.SUBRULE(this.filterClause) },
+      { ALT: () => this.SUBRULE(this.triplesSameSubjectPattern) },
+    ]);
+  });
+
+  // Assignment = 'SET' '(' Var ':=' Expression ')'  ([26])
   private assignment = this.RULE('assignment', () => {
-    this.CONSUME(Bind);
+    this.CONSUME(Set);
     this.CONSUME(LParen);
-    this.SUBRULE(this.expression);
-    this.CONSUME(As);
     this.SUBRULE(this.variable);
+    this.CONSUME(Assign);
+    this.SUBRULE(this.expression);
     this.CONSUME(RParen);
   });
 
-  // Constraint = BrackettedExpression | BuiltInCall
+  // Constraint = BrackettedExpression | BuiltInCall | FunctionCall  ([19])
   private constraint = this.RULE('constraint', () => {
     this.OR([
       { ALT: () => this.SUBRULE(this.brackettedExpression) },
       { ALT: () => this.SUBRULE(this.builtInCall) },
+      { ALT: () => this.SUBRULE(this.functionCall) },
     ]);
   });
 
-  // TriplesTemplateBlock = '{' TriplesTemplate? '}'
+  // FunctionCall = iri ArgList  ([20])
+  private functionCall = this.RULE('functionCall', () => {
+    this.SUBRULE(this.iriRef);
+    this.CONSUME(LParen);
+    this.OPTION(() => this.SUBRULE(this.expressionList));
+    this.CONSUME(RParen);
+  });
+
+  // ===========================================================================
+  // Template family (head templates + DATA blocks): no property paths.
+  // ===========================================================================
+
+  // TriplesTemplateBlock = '{' TriplesTemplate? '}'  ([15])
   private triplesTemplateBlock = this.RULE('triplesTemplateBlock', () => {
     this.CONSUME(LBrace);
     this.OPTION(() => {
@@ -307,7 +307,7 @@ export class SRLParser extends CstParser {
     this.CONSUME(RBrace);
   });
 
-  // TriplesTemplate = TriplesSameSubject ( '.' TriplesTemplate? )?
+  // TriplesTemplate = TriplesSameSubject ( '.' TriplesSameSubject? )*
   private triplesTemplate = this.RULE('triplesTemplate', () => {
     this.SUBRULE(this.triplesSameSubject);
     this.MANY(() => {
@@ -318,62 +318,70 @@ export class SRLParser extends CstParser {
     });
   });
 
-  // TriplesSameSubject = VarOrTerm PredicateObjectList
+  // TriplesSameSubject = VarOrTerm PredicateObjectListTemplate
   private triplesSameSubject = this.RULE('triplesSameSubject', () => {
-    this.OR([
-      {
-        ALT: () => {
-          this.SUBRULE(this.varOrTerm);
-          this.SUBRULE(this.predicateObjectList);
-        },
-      },
-      {
-        ALT: () => {
-          this.SUBRULE(this.reifiedTriple);
-          this.OPTION(() => {
-            this.SUBRULE2(this.predicateObjectList);
-          });
-        },
-      },
-    ]);
+    this.SUBRULE(this.varOrTerm);
+    this.SUBRULE(this.predicateObjectListTemplate);
   });
 
-  // PredicateObjectList = Verb ObjectList ( ';' ( Verb ObjectList )? )*
-  private predicateObjectList = this.RULE('predicateObjectList', () => {
-    this.SUBRULE(this.verb);
+  // PredicateObjectListTemplate = VerbTemplate ObjectList ( ';' ( VerbTemplate ObjectList )? )*
+  private predicateObjectListTemplate = this.RULE('predicateObjectListTemplate', () => {
+    this.SUBRULE(this.verbTemplate);
     this.SUBRULE(this.objectList);
     this.MANY(() => {
       this.CONSUME(Semicolon);
       this.OPTION(() => {
-        this.SUBRULE2(this.verb);
+        this.SUBRULE2(this.verbTemplate);
         this.SUBRULE2(this.objectList);
       });
     });
   });
 
-  // Verb = VarOrIRI | 'a' | PathExpression
-  private verb = this.RULE('verb', () => {
+  // VerbTemplate = 'a' | VarOrIri  ([86] — no property paths in templates)
+  private verbTemplate = this.RULE('verbTemplate', () => {
     this.OR([
       { ALT: () => this.CONSUME(RdfType) },
-      { ALT: () => this.SUBRULE(this.pathExpression) },
+      { ALT: () => this.SUBRULE(this.varOrIri) },
     ]);
   });
 
-  // PathExpression = PathAlternative
-  private pathExpression = this.RULE('pathExpression', () => {
-    this.SUBRULE(this.pathAlternative);
+  // ===========================================================================
+  // Pattern family (rule bodies): property paths and variable predicates allowed.
+  // ===========================================================================
+
+  // TriplesSameSubjectPattern = VarOrTerm PredicateObjectListPattern
+  private triplesSameSubjectPattern = this.RULE('triplesSameSubjectPattern', () => {
+    this.SUBRULE(this.varOrTerm);
+    this.SUBRULE(this.predicateObjectListPattern);
   });
 
-  // PathAlternative = PathSequence ( '|' PathSequence )*
-  private pathAlternative = this.RULE('pathAlternative', () => {
-    this.SUBRULE(this.pathSequence);
+  // PredicateObjectListPattern = VerbPattern ObjectList ( ';' ( VerbPattern ObjectList )? )*  ([69])
+  private predicateObjectListPattern = this.RULE('predicateObjectListPattern', () => {
+    this.SUBRULE(this.verbPattern);
+    this.SUBRULE(this.objectList);
     this.MANY(() => {
-      this.CONSUME(Pipe);
-      this.SUBRULE2(this.pathSequence);
+      this.CONSUME(Semicolon);
+      this.OPTION(() => {
+        this.SUBRULE2(this.verbPattern);
+        this.SUBRULE2(this.objectList);
+      });
     });
   });
 
-  // PathSequence = PathEltOrInverse ( '/' PathEltOrInverse )*
+  // VerbPattern = Path | Var  ([87] VerbPath, plus the predicate-position variable)
+  private verbPattern = this.RULE('verbPattern', () => {
+    this.OR([
+      { ALT: () => this.SUBRULE(this.variable) },
+      { ALT: () => this.SUBRULE(this.path) },
+    ]);
+  });
+
+  // Path = PathSequence  ([88])
+  private path = this.RULE('path', () => {
+    this.SUBRULE(this.pathSequence);
+  });
+
+  // PathSequence = PathEltOrInverse ( '/' PathEltOrInverse )*  ([89])
   private pathSequence = this.RULE('pathSequence', () => {
     this.SUBRULE(this.pathEltOrInverse);
     this.MANY(() => {
@@ -382,74 +390,28 @@ export class SRLParser extends CstParser {
     });
   });
 
-  // PathEltOrInverse = PathElt | '^' PathElt
+  // PathEltOrInverse = PathElt | '^' PathElt  ([90])
   private pathEltOrInverse = this.RULE('pathEltOrInverse', () => {
     this.OPTION(() => this.CONSUME(Caret));
     this.SUBRULE(this.pathElt);
   });
 
-  // PathElt = PathPrimary PathMod?
+  // PathElt = iri | 'a' | '(' Path ')'  ([91] — no *, +, ?, |, or negated property sets)
   private pathElt = this.RULE('pathElt', () => {
-    this.SUBRULE(this.pathPrimary);
-    this.OPTION(() => this.SUBRULE(this.pathMod));
-  });
-
-  // PathMod = '?' | '*' | '+'
-  private pathMod = this.RULE('pathMod', () => {
-    this.OR([
-      { ALT: () => this.CONSUME(QuestionMark) },
-      { ALT: () => this.CONSUME(Asterisk) },
-      { ALT: () => this.CONSUME(Plus) },
-    ]);
-  });
-
-  // PathPrimary = IRI | '(' PathExpression ')' | '!' PathNegatedPropertySet
-  private pathPrimary = this.RULE('pathPrimary', () => {
     this.OR([
       {
         ALT: () => {
           this.CONSUME(LParen);
-          this.SUBRULE(this.pathExpression);
+          this.SUBRULE(this.path);
           this.CONSUME(RParen);
         },
       },
-      {
-        ALT: () => {
-          this.CONSUME(Bang);
-          this.SUBRULE(this.pathNegatedPropertySet);
-        },
-      },
-      { ALT: () => this.SUBRULE(this.varOrIri) },
+      { ALT: () => this.CONSUME(RdfType) },
+      { ALT: () => this.SUBRULE(this.iriRef) },
     ]);
   });
 
-  // PathNegatedPropertySet = PathOneInPropertySet | '(' ( PathOneInPropertySet ( '|' PathOneInPropertySet )* )? ')'
-  private pathNegatedPropertySet = this.RULE('pathNegatedPropertySet', () => {
-    this.OR([
-      {
-        ALT: () => {
-          this.CONSUME(LParen);
-          this.OPTION(() => {
-            this.SUBRULE(this.pathOneInPropertySet);
-            this.MANY(() => {
-              this.CONSUME(Pipe);
-              this.SUBRULE2(this.pathOneInPropertySet);
-            });
-          });
-          this.CONSUME(RParen);
-        },
-      },
-      { ALT: () => this.SUBRULE3(this.pathOneInPropertySet) },
-    ]);
-  });
-
-  // PathOneInPropertySet = IRI | '^' IRI
-  private pathOneInPropertySet = this.RULE('pathOneInPropertySet', () => {
-    this.OPTION(() => this.CONSUME(Caret));
-    this.SUBRULE(this.iriRef);
-  });
-
-  // ObjectList = Object ( ',' Object )*
+  // ObjectList = Object ( ',' Object )*  (shared by both families)
   private objectList = this.RULE('objectList', () => {
     this.SUBRULE(this.objectTerm);
     this.MANY(() => {
@@ -458,21 +420,9 @@ export class SRLParser extends CstParser {
     });
   });
 
-  // Object = VarOrTerm | ReifiedTriple
+  // Object = VarOrTerm
   private objectTerm = this.RULE('objectTerm', () => {
-    this.OR([
-      { ALT: () => this.SUBRULE(this.reifiedTriple) },
-      { ALT: () => this.SUBRULE(this.varOrTerm) },
-    ]);
-  });
-
-  // ReifiedTriple = '<<' Subject Verb Object '>>'
-  private reifiedTriple = this.RULE('reifiedTriple', () => {
-    this.CONSUME(DoubleLeftAngle);
     this.SUBRULE(this.varOrTerm);
-    this.SUBRULE(this.verb);
-    this.SUBRULE(this.objectTerm);
-    this.CONSUME(DoubleRightAngle);
   });
 
   // VarOrTerm = Var | GraphTerm
@@ -499,13 +449,13 @@ export class SRLParser extends CstParser {
     ]);
   });
 
-  // GraphTerm = IRI | RDFLiteral | NumericLiteral | BooleanLiteral | BlankNode | Collection
+  // GraphTerm = IRI | RDFLiteral | NumericLiteral | BooleanLiteral | BlankNode
+  // (RDF collections `( … )` are deferred; see the "Not Yet Implemented" backlog.)
   private graphTerm = this.RULE('graphTerm', () => {
     this.OR([
       { ALT: () => this.SUBRULE(this.iriRef) },
       { ALT: () => this.SUBRULE(this.literal) },
       { ALT: () => this.CONSUME(BlankNode) },
-      { ALT: () => this.SUBRULE(this.collection) },
     ]);
   });
 
@@ -568,15 +518,6 @@ export class SRLParser extends CstParser {
       { ALT: () => this.CONSUME(True) },
       { ALT: () => this.CONSUME(False) },
     ]);
-  });
-
-  // Collection = '(' GraphTerm* ')'
-  private collection = this.RULE('collection', () => {
-    this.CONSUME(LParen);
-    this.MANY(() => {
-      this.SUBRULE(this.graphTerm);
-    });
-    this.CONSUME(RParen);
   });
 
   // Expression = ConditionalOrExpression
@@ -741,34 +682,16 @@ export class SRLParser extends CstParser {
     ]);
   });
 
-  // PrimaryExpression = BrackettedExpression | BuiltInCall | ExistsFunc | NotExistsFunc | IRI | Literal | Var
+  // PrimaryExpression = BrackettedExpression | BuiltInCall | IRI | Literal | Var
+  // (SHACL 1.2 Rules has no EXISTS / NOT EXISTS in expressions; negation is only `NOT { … }`.)
   private primaryExpression = this.RULE('primaryExpression', () => {
     this.OR([
-      { ALT: () => this.SUBRULE(this.existsFunc) },
-      { ALT: () => this.SUBRULE(this.notExistsFunc) },
       { ALT: () => this.SUBRULE(this.brackettedExpression) },
       { ALT: () => this.SUBRULE(this.builtInCall) },
       { ALT: () => this.SUBRULE(this.iriRef) },
       { ALT: () => this.SUBRULE(this.literal) },
       { ALT: () => this.SUBRULE(this.variable) },
     ]);
-  });
-
-  // ExistsFunc = 'EXISTS' GroupGraphPattern
-  private existsFunc = this.RULE('existsFunc', () => {
-    this.CONSUME(Exists);
-    this.CONSUME(LBrace);
-    this.SUBRULE(this.bodyPattern1);
-    this.CONSUME(RBrace);
-  });
-
-  // NotExistsFunc = 'NOT' 'EXISTS' GroupGraphPattern
-  private notExistsFunc = this.RULE('notExistsFunc', () => {
-    this.CONSUME(Not);
-    this.CONSUME(Exists);
-    this.CONSUME(LBrace);
-    this.SUBRULE(this.bodyPattern1);
-    this.CONSUME(RBrace);
   });
 
   // BrackettedExpression = '(' Expression ')'
@@ -808,7 +731,6 @@ export interface ParseResult {
 }
 
 export function parseSRL(text: string): ParseResult {
-  const { SRLLexer } = require('./tokens');
   const lexResult = SRLLexer.tokenize(text);
   
   parserInstance.input = lexResult.tokens;
@@ -816,16 +738,16 @@ export function parseSRL(text: string): ParseResult {
   
   return {
     cst,
-    errors: [...lexResult.errors.map((e: { message: string; offset: number; line: number; column: number }) => ({
+    errors: [...lexResult.errors.map((e) => ({
       message: e.message,
       token: {
         image: '',
         startOffset: e.offset,
-        startLine: e.line,
-        startColumn: e.column,
+        startLine: e.line ?? 1,
+        startColumn: e.column ?? 1,
         endOffset: e.offset,
-        endLine: e.line,
-        endColumn: e.column,
+        endLine: e.line ?? 1,
+        endColumn: e.column ?? 1,
       },
     })), ...parserInstance.errors] as IRecognitionException[],
     tokens: lexResult.tokens,
@@ -846,7 +768,6 @@ const RULE_CATEGORIES: Record<string, GrammarRuleInfo['category']> = {
   rule: 'rules',
   rule1: 'rules',
   rule2: 'rules',
-  rule3: 'rules',
   declaration: 'rules',
   dataBlock: 'rules',
   headTemplate: 'patterns',
@@ -856,25 +777,25 @@ const RULE_CATEGORIES: Record<string, GrammarRuleInfo['category']> = {
   bodyNotTriples: 'patterns',
   filterClause: 'patterns',
   negation: 'patterns',
+  bodyBasicSeq: 'patterns',
+  bodyBasicElement: 'patterns',
   assignment: 'patterns',
   constraint: 'patterns',
+  functionCall: 'patterns',
   triplesTemplateBlock: 'terms',
   triplesTemplate: 'terms',
   triplesSameSubject: 'terms',
-  predicateObjectList: 'terms',
-  verb: 'terms',
-  pathExpression: 'terms',
-  pathAlternative: 'terms',
+  predicateObjectListTemplate: 'terms',
+  verbTemplate: 'terms',
+  triplesSameSubjectPattern: 'terms',
+  predicateObjectListPattern: 'terms',
+  verbPattern: 'terms',
+  path: 'terms',
   pathSequence: 'terms',
   pathEltOrInverse: 'terms',
   pathElt: 'terms',
-  pathMod: 'terms',
-  pathPrimary: 'terms',
-  pathNegatedPropertySet: 'terms',
-  pathOneInPropertySet: 'terms',
   objectList: 'terms',
   objectTerm: 'terms',
-  reifiedTriple: 'terms',
   varOrTerm: 'terms',
   varOrIri: 'terms',
   variable: 'terms',
@@ -885,7 +806,6 @@ const RULE_CATEGORIES: Record<string, GrammarRuleInfo['category']> = {
   string: 'literals',
   numericLiteral: 'literals',
   booleanLiteral: 'literals',
-  collection: 'terms',
   expression: 'expressions',
   conditionalOrExpression: 'expressions',
   conditionalAndExpression: 'expressions',
@@ -896,8 +816,6 @@ const RULE_CATEGORIES: Record<string, GrammarRuleInfo['category']> = {
   multiplicativeExpression: 'expressions',
   unaryExpression: 'expressions',
   primaryExpression: 'expressions',
-  existsFunc: 'expressions',
-  notExistsFunc: 'expressions',
   brackettedExpression: 'expressions',
   builtInCall: 'expressions',
   expressionList: 'expressions',

@@ -1,5 +1,5 @@
 import { Store, Quad, NamedNode, Literal, BlankNode, DefaultGraph, Term, DataFactory } from 'n3';
-import { TriplePattern, RDFTerm, VariableTerm, PathExpression } from '../srl/ast';
+import { TriplePattern, RDFTerm, VariableTerm, PathExpression, BodyElement } from '../srl/ast';
 
 const { namedNode, literal, blankNode } = DataFactory;
 
@@ -52,6 +52,10 @@ export function isVariable(term: RDFTerm | PathExpression): term is VariableTerm
 
 export function isRDFTerm(term: RDFTerm | PathExpression): term is RDFTerm {
   return 'termType' in term;
+}
+
+export function isTriplePattern(element: BodyElement): element is TriplePattern {
+  return 'subject' in element && 'predicate' in element && 'object' in element;
 }
 
 export function getPatternVariables(pattern: TriplePattern): string[] {
@@ -131,15 +135,19 @@ function matchPathPattern(store: Store, pattern: TriplePattern): SolutionMapping
   const path = pattern.predicate as PathExpression;
   const solutions: SolutionMapping[] = [];
   
-  // Get all possible subjects
+  // Candidate start nodes for the path. When the subject is a variable, a
+  // forward path starts from a subject-position term while an inverse path
+  // starts from an object-position term, so seed from BOTH positions (the
+  // reachability walk + the object-constraint filter below keep results sound).
   const subjects: Term[] = [];
   if (isVariable(pattern.subject)) {
-    const allQuads = store.getQuads(null, null, null, null);
     const seen = new Set<string>();
-    for (const quad of allQuads) {
-      if (!seen.has(quad.subject.value)) {
-        seen.add(quad.subject.value);
-        subjects.push(quad.subject);
+    for (const quad of store.getQuads(null, null, null, null)) {
+      for (const term of [quad.subject, quad.object]) {
+        if (!seen.has(term.value)) {
+          seen.add(term.value);
+          subjects.push(term);
+        }
       }
     }
   } else {
@@ -174,20 +182,14 @@ function matchPathPattern(store: Store, pattern: TriplePattern): SolutionMapping
 
 function evaluatePath(store: Store, start: Term, path: PathExpression, depth: number): Term[] {
   if (depth > MAX_PATH_DEPTH) return [];
-  
+
   switch (path.pathType) {
     case 'iri': {
       const pred = namedNode(path.value);
       const quads = store.getQuads(start as NamedNode | BlankNode, pred, null, null);
       return quads.map(q => q.object);
     }
-    
-    case 'variable': {
-      // Variable in path position - match any predicate
-      const quads = store.getQuads(start as NamedNode | BlankNode, null, null, null);
-      return quads.map(q => q.object);
-    }
-    
+
     case 'sequence': {
       let current: Term[] = [start];
       for (const element of path.elements) {
@@ -199,68 +201,12 @@ function evaluatePath(store: Store, start: Term, path: PathExpression, depth: nu
       }
       return current;
     }
-    
-    case 'alternative': {
-      const results: Term[] = [];
-      const seen = new Set<string>();
-      for (const option of path.options) {
-        for (const term of evaluatePath(store, start, option, depth + 1)) {
-          if (!seen.has(term.value)) {
-            seen.add(term.value);
-            results.push(term);
-          }
-        }
-      }
-      return results;
-    }
-    
+
     case 'inverse': {
       // Find all subjects where the start node is the object
       return evaluateInversePath(store, start, path.path, depth + 1);
     }
-    
-    case 'zeroOrMore': {
-      return evaluateZeroOrMore(store, start, path.path, depth);
-    }
-    
-    case 'oneOrMore': {
-      return evaluateOneOrMore(store, start, path.path, depth);
-    }
-    
-    case 'zeroOrOne': {
-      const result = [start];
-      result.push(...evaluatePath(store, start, path.path, depth + 1));
-      return [...new Set(result.map(t => t.value))].map(v => 
-        result.find(t => t.value === v)!
-      );
-    }
-    
-    case 'negatedPropertySet': {
-      const excluded = new Set(path.iris.filter(i => !i.inverse).map(i => i.iri));
-      const excludedInverse = new Set(path.iris.filter(i => i.inverse).map(i => i.iri));
-      
-      const results: Term[] = [];
-      const quads = store.getQuads(start as NamedNode | BlankNode, null, null, null);
-      
-      for (const quad of quads) {
-        if (!excluded.has(quad.predicate.value)) {
-          results.push(quad.object);
-        }
-      }
-      
-      // Also get inverse matches (where start is object and predicate is NOT in excludedInverse)
-      if (excludedInverse.size > 0) {
-        const inverseQuads = store.getQuads(null, null, start, null);
-        for (const quad of inverseQuads) {
-          if (!excludedInverse.has(quad.predicate.value)) {
-            results.push(quad.subject);
-          }
-        }
-      }
-      
-      return results;
-    }
-    
+
     default:
       return [];
   }
@@ -268,19 +214,14 @@ function evaluatePath(store: Store, start: Term, path: PathExpression, depth: nu
 
 function evaluateInversePath(store: Store, end: Term, path: PathExpression, depth: number): Term[] {
   if (depth > MAX_PATH_DEPTH) return [];
-  
+
   switch (path.pathType) {
     case 'iri': {
       const pred = namedNode(path.value);
       const quads = store.getQuads(null, pred, end, null);
       return quads.map(q => q.subject);
     }
-    
-    case 'variable': {
-      const quads = store.getQuads(null, null, end, null);
-      return quads.map(q => q.subject);
-    }
-    
+
     case 'sequence': {
       // Reverse the sequence and evaluate
       let current: Term[] = [end];
@@ -293,76 +234,15 @@ function evaluateInversePath(store: Store, end: Term, path: PathExpression, dept
       }
       return current;
     }
-    
-    case 'alternative': {
-      const results: Term[] = [];
-      const seen = new Set<string>();
-      for (const option of path.options) {
-        for (const term of evaluateInversePath(store, end, option, depth + 1)) {
-          if (!seen.has(term.value)) {
-            seen.add(term.value);
-            results.push(term);
-          }
-        }
-      }
-      return results;
-    }
-    
+
     case 'inverse': {
       // Double inverse = forward
       return evaluatePath(store, end, path.path, depth + 1);
     }
-    
+
     default:
       return [];
   }
-}
-
-function evaluateZeroOrMore(store: Store, start: Term, path: PathExpression, depth: number): Term[] {
-  const results: Term[] = [start];
-  const seen = new Set<string>([start.value]);
-  const queue: Term[] = [start];
-  let iterations = 0;
-  
-  while (queue.length > 0 && iterations < MAX_PATH_DEPTH) {
-    iterations++;
-    const current = queue.shift()!;
-    const next = evaluatePath(store, current, path, depth + 1);
-    
-    for (const term of next) {
-      if (!seen.has(term.value)) {
-        seen.add(term.value);
-        results.push(term);
-        queue.push(term);
-      }
-    }
-  }
-  
-  return results;
-}
-
-function evaluateOneOrMore(store: Store, start: Term, path: PathExpression, depth: number): Term[] {
-  const initial = evaluatePath(store, start, path, depth + 1);
-  const results: Term[] = [...initial];
-  const seen = new Set<string>(initial.map(t => t.value));
-  const queue: Term[] = [...initial];
-  let iterations = 0;
-  
-  while (queue.length > 0 && iterations < MAX_PATH_DEPTH) {
-    iterations++;
-    const current = queue.shift()!;
-    const next = evaluatePath(store, current, path, depth + 1);
-    
-    for (const term of next) {
-      if (!seen.has(term.value)) {
-        seen.add(term.value);
-        results.push(term);
-        queue.push(term);
-      }
-    }
-  }
-  
-  return results;
 }
 
 export function joinSolutions(
@@ -498,22 +378,10 @@ function formatPathExpression(path: PathExpression): string {
   switch (path.pathType) {
     case 'iri':
       return `<${path.value}>`;
-    case 'variable':
-      return `?${path.name}`;
     case 'sequence':
       return path.elements.map(formatPathExpression).join('/');
-    case 'alternative':
-      return `(${path.options.map(formatPathExpression).join('|')})`;
     case 'inverse':
       return `^${formatPathExpression(path.path)}`;
-    case 'zeroOrMore':
-      return `${formatPathExpression(path.path)}*`;
-    case 'oneOrMore':
-      return `${formatPathExpression(path.path)}+`;
-    case 'zeroOrOne':
-      return `${formatPathExpression(path.path)}?`;
-    case 'negatedPropertySet':
-      return `!(${path.iris.map(i => i.inverse ? `^<${i.iri}>` : `<${i.iri}>`).join('|')})`;
     default:
       return '[path]';
   }

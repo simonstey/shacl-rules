@@ -52,9 +52,9 @@ const TOKEN_CATEGORIES: Record<string, TokenInfo['category']> = {
   Prefix: 'keyword',
   Base: 'keyword',
   Filter: 'keyword',
-  Bind: 'keyword',
-  As: 'keyword',
   Not: 'keyword',
+  Set: 'keyword',
+  In: 'keyword',
   Transitive: 'keyword',
   Symmetric: 'keyword',
   Inverse: 'keyword',
@@ -91,7 +91,7 @@ const TOKEN_CATEGORIES: Record<string, TokenInfo['category']> = {
   Ampersand: 'operator',
   DoublePipe: 'operator',
   Bang: 'operator',
-  ColonMinus: 'operator',
+  Assign: 'operator',
   DoubleCaret: 'operator',
   LBrace: 'delimiter',
   RBrace: 'delimiter',
@@ -99,8 +99,6 @@ const TOKEN_CATEGORIES: Record<string, TokenInfo['category']> = {
   RParen: 'delimiter',
   LBracket: 'delimiter',
   RBracket: 'delimiter',
-  LAngle: 'delimiter',
-  RAngle: 'delimiter',
   DoubleLeftAngle: 'delimiter',
   DoubleRightAngle: 'delimiter',
   Dot: 'delimiter',
@@ -119,9 +117,9 @@ const TOKEN_DESCRIPTIONS: Record<string, string> = {
   Prefix: 'Namespace prefix declaration',
   Base: 'Base IRI declaration',
   Filter: 'Filter expression',
-  Bind: 'Variable binding',
-  As: 'Alias keyword',
   Not: 'Negation keyword',
+  Set: 'Variable assignment (SET)',
+  In: 'Set membership operator (IN)',
   Transitive: 'Transitive property declaration',
   Symmetric: 'Symmetric property declaration',
   Inverse: 'Inverse property declaration',
@@ -158,7 +156,7 @@ const TOKEN_DESCRIPTIONS: Record<string, string> = {
   Ampersand: 'Logical AND (&&)',
   DoublePipe: 'Logical OR (||)',
   Bang: 'Logical NOT (!)',
-  ColonMinus: 'Rule implication (:-)',
+  Assign: 'Assignment operator (:=)',
   DoubleCaret: 'Datatype operator (^^)',
   LBrace: 'Left brace ({)',
   RBrace: 'Right brace (})',
@@ -285,15 +283,29 @@ function analyzeStructure(tokens: IToken[]): ParsedStructure {
     }
 
     if (tokenType === 'Transitive' || tokenType === 'Symmetric' || tokenType === 'Inverse') {
+      const isIriToken = (name?: string) =>
+        name === 'PrefixedName' || name === 'ColonLocalName' || name === 'IRI';
       let property = '';
-      let j = i + 1;
-      while (j < tokens.length && j < i + 5) {
-        const t = tokens[j];
-        if (t.tokenType?.name === 'PrefixedName' || t.tokenType?.name === 'ColonLocalName' || t.tokenType?.name === 'IRI') {
-          property = t.image;
-          break;
+      if (tokenType === 'Symmetric') {
+        // Postfix form `( iri ) SYMMETRIC`: the IRI precedes the keyword.
+        let j = i - 1;
+        while (j >= 0 && j > i - 5) {
+          if (isIriToken(tokens[j].tokenType?.name)) {
+            property = tokens[j].image;
+            break;
+          }
+          j--;
         }
-        j++;
+      } else {
+        // Prefix form `TRANSITIVE( iri )` / `INVERSE( iri, iri )`.
+        let j = i + 1;
+        while (j < tokens.length && j < i + 5) {
+          if (isIriToken(tokens[j].tokenType?.name)) {
+            property = tokens[j].image;
+            break;
+          }
+          j++;
+        }
       }
       structure.declarations.push({
         type: tokenType,

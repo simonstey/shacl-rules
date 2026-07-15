@@ -53,7 +53,7 @@ RULE { ?x :ancestorOf ?y } WHERE { ?x :parentOf ?y }
 
 # Shorthand declarations
 TRANSITIVE(:ancestorOf)
-SYMMETRIC(:siblingOf)
+(:siblingOf) SYMMETRIC
 
 DATA {
     :john :parentOf :mary .

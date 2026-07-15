@@ -29,11 +29,11 @@ SHACL Rules Playground is an interactive editor for writing and testing **SHACL 
 ## Features
 
 - **Full SRL Parser** — Complete Chevrotain-based lexer and parser for the Shape Rules Language
-- **Semantic Validation** — Checks for undefined prefixes, unbound head variables, and well-formedness conditions
-- **Rule Execution** — Fixed-point iteration with proper stratification for rules with negation
+- **Spec well-formedness** — AST-based checks (SHACL 1.2 Rules §4.2): FILTER/SET variable scoping, single-assignment `SET`, non-leaking `NOT` scope, head variables bound by the body, ground `DATA` blocks, and the [121] built-in set
+- **Rule Execution** — Fixed-point iteration with open/closed-dependency stratification and run-once rules
 - **Monaco Integration** — Syntax highlighting, hover documentation, and code completion for SRL
-- **Multiple Rule Forms** — Support for `RULE...WHERE`, `IF...THEN`, and datalog-style (`:-`) syntax
-- **Shorthand Declarations** — `TRANSITIVE`, `SYMMETRIC`, and `INVERSE` property declarations
+- **Two Rule Forms** — `RULE iri? { head } WHERE { body }` (optional naming IRI) and `IF { body } THEN { head }`
+- **Shorthand Declarations** — `TRANSITIVE(:p)`, postfix `(:p) SYMMETRIC`, and `INVERSE(:p, :q)` property declarations
 - **Light & Dark Themes** — Token-based theming (CSS variables) that persists your choice and seeds from your OS preference on first load
 - **Responsive Layout** — Resizable panels that stack vertically on narrow viewports; the examples sidebar auto-collapses
 - **Accessible** — WCAG 2.1 AA: sufficient contrast in both themes, keyboard-operable controls with visible focus, ARIA labels/roles, and `prefers-reduced-motion` support
@@ -72,134 +72,116 @@ Open [http://localhost:3000](http://localhost:3000) to access the playground.
 
 ## SRL Language Reference
 
-SRL (Shape Rules Language) is the syntax for expressing SHACL 1.2 Rules. It supports three equivalent forms:
+SRL (Shape Rules Language) is the syntax for expressing SHACL 1.2 Rules. It supports two equivalent forms:
 
 ```sparql
 PREFIX : <http://example.org/>
 
-# Form 1: RULE ... WHERE
+# Form 1: RULE ... WHERE  (an optional IRI right after RULE names the rule)
 RULE { ?x :childOf ?y } WHERE { ?y :parentOf ?x }
+RULE :childRule { ?x :childOf ?y } WHERE { ?y :parentOf ?x }
 
-# Form 2: IF ... THEN  
+# Form 2: IF ... THEN
 IF { ?y :parentOf ?x } THEN { ?x :childOf ?y }
-
-# Form 3: Datalog-style
-{ ?x :childOf ?y } :- { ?y :parentOf ?x }
 ```
+
+The head is a **template** (variables and IRIs, no property paths); the body is a
+**pattern** (variables, IRIs, and sequence/inverse property paths). `DATA` blocks
+must be **ground** (no variables).
 
 ### Shorthand Declarations
 
 ```sparql
-TRANSITIVE(:ancestorOf)     # Transitive closure
-SYMMETRIC(:friendOf)        # Symmetric relationship
+TRANSITIVE(:ancestorOf)      # Transitive closure
+(:friendOf) SYMMETRIC        # Symmetric relationship — note the postfix syntax
 INVERSE(:parentOf, :childOf) # Inverse properties
 ```
 
 ### Body Elements
 
-| Element        | Syntax               | Description                |
-| -------------- | -------------------- | -------------------------- |
-| Triple Pattern | `?s :p ?o`           | Match triples in the graph |
-| Filter         | `FILTER(?x > 0)`     | Boolean condition          |
-| Bind           | `BIND(expr AS ?var)` | Variable assignment        |
-| Negation       | `NOT { pattern }`    | Negation-as-failure        |
+| Element        | Syntax               | Description                                            |
+| -------------- | -------------------- | ------------------------------------------------------ |
+| Triple Pattern | `?s :p ?o`           | Match triples in the graph                             |
+| Property Path  | `?s :p1/:p2 ?o`      | Sequence (`/`) and inverse (`^`) paths (body only)     |
+| Filter         | `FILTER(?x > 0)`     | Boolean condition                                      |
+| Assignment     | `SET(?var := expr)`  | Assign a **new** variable; an eval error drops the row |
+| Negation       | `NOT { pattern }`    | Negation-as-failure (triple patterns + `FILTER` only)  |
 
 ## Supported Features
 
 ### Parser & Grammar
 
-| Feature                                | Status      | Notes                    |
-| -------------------------------------- | ----------- | ------------------------ |
-| Rule forms (RULE/WHERE, IF/THEN, `:-`) | ✅ Supported | All three forms          |
-| Triple patterns                        | ✅ Supported | Subject-predicate-object |
-| FILTER expressions                     | ✅ Supported | Full expression syntax   |
-| BIND assignments                       | ✅ Supported | Variable binding         |
-| NOT negation                           | ✅ Supported | Negation-as-failure      |
-| TRANSITIVE declaration                 | ✅ Supported | Shorthand                |
-| SYMMETRIC declaration                  | ✅ Supported | Shorthand                |
-| INVERSE declaration                    | ✅ Supported | Shorthand                |
-| PREFIX/BASE declarations               | ✅ Supported | Standard Turtle prefixes |
-| DATA blocks                            | ✅ Supported | Inline RDF data          |
-| Reified triples (`<< >>`)              | ⚠️ Parsed    | AST not yet implemented  |
-| Collections `( )`                      | ⚠️ Parsed    | Limited support          |
+| Feature                          | Status      | Notes                                       |
+| -------------------------------- | ----------- | ------------------------------------------- |
+| Rule forms (RULE/WHERE, IF/THEN) | ✅ Supported | The datalog `:-` form was removed from spec |
+| Rule naming (`RULE iri? …`)      | ✅ Supported | Optional identifying IRI                    |
+| Triple patterns                  | ✅ Supported | Subject-predicate-object                    |
+| Property paths (`/`, `^`)        | ✅ Supported | Sequence and inverse, body only             |
+| FILTER expressions               | ✅ Supported | Full expression syntax                      |
+| SET assignments                  | ✅ Supported | `SET(?var := expr)`, single-assignment      |
+| NOT negation                     | ✅ Supported | Triple patterns + FILTER only               |
+| IN / NOT IN                      | ✅ Supported | Set membership in expressions               |
+| TRANSITIVE declaration           | ✅ Supported | Shorthand                                   |
+| SYMMETRIC declaration (postfix)  | ✅ Supported | `(:p) SYMMETRIC`                            |
+| INVERSE declaration              | ✅ Supported | Shorthand                                   |
+| PREFIX/BASE/VERSION/IMPORTS      | ✅ Supported | Interspersed prologue allowed               |
+| DATA blocks                      | ✅ Supported | Ground triples only                         |
 
 ### Expression Functions
 
-| Category            | Functions                                                                                            | Status      |
-| ------------------- | ---------------------------------------------------------------------------------------------------- | ----------- |
-| **Type Checking**   | `BOUND`, `ISIRI`, `ISBLANK`, `ISLITERAL`, `ISNUMERIC`                                                | ✅ Supported |
-| **String**          | `STR`, `STRLEN`, `SUBSTR`, `UCASE`, `LCASE`, `CONTAINS`, `STRSTARTS`, `STRENDS`, `CONCAT`, `REPLACE` | ✅ Supported |
-| **Numeric**         | `ABS`, `ROUND`, `CEIL`, `FLOOR`                                                                      | ✅ Supported |
-| **DateTime**        | `NOW`, `YEAR`, `MONTH`, `DAY`, `HOURS`, `MINUTES`, `SECONDS`                                         | ✅ Supported |
-| **Conditional**     | `IF`, `COALESCE`                                                                                     | ✅ Supported |
-| **Type Conversion** | `DATATYPE`, `LANG`                                                                                   | ✅ Supported |
+The built-in set is exactly SHACL 1.2 Rules production `[121]`. `BOUND`, `RAND`, `COALESCE`, and the hash functions (`MD5`/`SHA*`) are **not** part of the language and are rejected.
+
+| Category            | Functions                                                                                                          | Status      |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------ | ----------- |
+| **Type Checking**   | `isIRI`, `isURI`, `isBLANK`, `isLITERAL`, `isNUMERIC`, `sameTerm`, `hasLANG`, `hasLANGDIR`, `isTRIPLE`             | ✅ Supported |
+| **String**          | `STR`, `STRLEN`, `SUBSTR`, `UCASE`, `LCASE`, `CONTAINS`, `STRSTARTS`, `STRENDS`, `STRBEFORE`, `STRAFTER`, `CONCAT`, `REPLACE`, `REGEX`, `ENCODE_FOR_URI` | ✅ Supported |
+| **Numeric**         | `ABS`, `ROUND`, `CEIL`, `FLOOR`                                                                                    | ✅ Supported |
+| **DateTime**        | `NOW`, `YEAR`, `MONTH`, `DAY`, `HOURS`, `MINUTES`, `SECONDS`, `TIMEZONE`, `TZ`                                     | ✅ Supported |
+| **Conditional**     | `IF`                                                                                                               | ✅ Supported |
+| **Constructors**    | `IRI`, `URI`, `BNODE`, `STRDT`, `STRLANG`, `UUID`, `STRUUID`                                                       | ✅ Supported |
+| **Type/Language**   | `DATATYPE`, `LANG`, `LANGMATCHES`                                                                                  | ✅ Supported |
 
 ### Execution Engine
 
-| Feature               | Status      | Notes                 |
-| --------------------- | ----------- | --------------------- |
-| Fixed-point iteration | ✅ Supported | Until no new triples  |
-| Stratification        | ✅ Supported | For negation handling |
-| Solution mapping/join | ✅ Supported | Pattern matching      |
-| Triple instantiation  | ✅ Supported | Head generation       |
-| Provenance tracking   | ✅ Supported | Source rule info      |
+| Feature               | Status      | Notes                                                     |
+| --------------------- | ----------- | --------------------------------------------------------- |
+| Fixed-point iteration | ✅ Supported | General rules iterate per stratum until no new triples    |
+| Stratification        | ✅ Supported | Open/closed dependency edges; rejects closed-edge cycles  |
+| Run-once rules        | ✅ Supported | `SET` or blank-node-head rules fire once before the loop  |
+| DATA seeding (GI)     | ✅ Supported | DATA triples not in the base graph count as inferred      |
+| `NOW()` pinning       | ✅ Supported | Constant across a single rule-set evaluation              |
+| Solution mapping/join | ✅ Supported | Pattern matching                                          |
+| Provenance tracking   | ✅ Supported | Source rule info                                          |
 
 ## Not Yet Implemented
 
-The following features from the SHACL 1.2 Rules specification are not yet implemented:
+The parser and engine cover the core SHACL 1.2 Rules grammar. The following are
+deferred (they parse to errors today) and tracked as backlog:
 
-### Grammar & Parser
+### RDF 1.2 rich terms
 
-| Feature                | Spec Reference | Description                                            | Priority |
-| ---------------------- | -------------- | ------------------------------------------------------ | -------- |
-| Path expressions       | `[47-51]`      | Property paths (`^`, `/`, `\|`, `*`, `+`, `?`)         | 🔴 High   |
-| IN / NOT IN            | `[35]`         | Set membership operators in expressions                | 🔴 High   |
-| EXISTS / NOT EXISTS    | `[44]`         | Pattern existence tests in expressions                 | 🔴 High   |
-| REFLEXIVE declaration  | `[12]`         | Reflexive property shorthand                           | 🔴 High   |
-| FunctionCall with IRIs | `[45]`         | User-defined functions via IRI (e.g., `ex:myFunc(?x)`) | 🟡 Medium |
-| Triple Terms           | `[68-73]`      | RDF-star quoted triples as terms                       | 🟢 Low    |
-| Reifiers               | `[27, 58-61]`  | RDF-star reification blocks                            | 🟢 Low    |
-| Annotations            | `[62-64]`      | RDF-star triple annotations                            | 🟢 Low    |
+| Feature                       | Syntax            | Notes                                                        |
+| ----------------------------- | ----------------- | ------------------------------------------------------------ |
+| RDF collections               | `( 1 2 3 )`       | List syntax in triple positions                              |
+| Blank-node property lists     | `[ :p :o ]`       | Anonymous nodes with inline predicates                       |
+| Reified triples               | `<< :s :p :o >>`  | RDF-star quoted triples as terms                             |
+| Triple terms                  | `<<( :s :p :o )>>`| RDF-star triple terms                                        |
+| Reifiers / annotation blocks  | `~`, `{\| … \|}`  | RDF-star reification and annotations                         |
 
-### Expression Functions
+### Property paths
 
-| Function         | Category    | Description                     | Priority |
-| ---------------- | ----------- | ------------------------------- | -------- |
-| `ENCODE_FOR_URI` | String      | URI-encode a string             | 🟡 Medium |
-| `REGEX`          | String      | Regular expression matching     | 🟡 Medium |
-| `LANGMATCHES`    | String      | Language tag matching           | 🟡 Medium |
-| `SAMETERM`       | Comparison  | RDF term identity check         | 🟡 Medium |
-| `RAND`           | Numeric     | Random number generation        | 🟡 Medium |
-| `TIMEZONE`       | DateTime    | Extract timezone as duration    | 🟡 Medium |
-| `TZ`             | DateTime    | Extract timezone as string      | 🟡 Medium |
-| `MD5`            | Hash        | MD5 hash function               | 🟡 Medium |
-| `SHA1`           | Hash        | SHA-1 hash function             | 🟡 Medium |
-| `SHA256`         | Hash        | SHA-256 hash function           | 🟡 Medium |
-| `SHA384`         | Hash        | SHA-384 hash function           | 🟡 Medium |
-| `SHA512`         | Hash        | SHA-512 hash function           | 🟡 Medium |
-| `UUID`           | Identifier  | Generate UUID as IRI            | 🟡 Medium |
-| `STRUUID`        | Identifier  | Generate UUID as string         | 🟡 Medium |
-| `BNODE`          | Constructor | Create deterministic blank node | 🟡 Medium |
-| `IRI` / `URI`    | Constructor | Construct IRI from string       | 🟡 Medium |
-| `STRDT`          | Constructor | Create typed literal            | 🟡 Medium |
-| `STRLANG`        | Constructor | Create language-tagged literal  | 🟡 Medium |
-| `STRBEFORE`      | String      | Substring before match          | 🟡 Medium |
-| `STRAFTER`       | String      | Substring after match           | 🟡 Medium |
+Only sequence (`/`) and inverse (`^`) — the paths that expand into triple
+patterns — are supported (per spec). Zero-or-more (`*`), one-or-more (`+`),
+optional (`?`), alternative (`\|`), and negated property sets (`!`) are **not**
+part of SHACL 1.2 Rules and are rejected.
 
-### Aggregates
+### Out of scope for the language
 
-| Function       | Description                | Priority |
-| -------------- | -------------------------- | -------- |
-| `COUNT`        | Count solutions            | 🟡 Medium |
-| `SUM`          | Sum numeric values         | 🟡 Medium |
-| `MIN`          | Minimum value              | 🟡 Medium |
-| `MAX`          | Maximum value              | 🟡 Medium |
-| `AVG`          | Average value              | 🟡 Medium |
-| `SAMPLE`       | Arbitrary value from group | 🟡 Medium |
-| `GROUP_CONCAT` | Concatenate group values   | 🟡 Medium |
+- **Out-of-spec functions**: `BOUND`, `RAND`, `COALESCE`, `MD5`/`SHA*`, and SPARQL aggregates (`COUNT`/`SUM`/`MIN`/`MAX`/`AVG`/`SAMPLE`/`GROUP_CONCAT`) are not in production `[121]` and are rejected.
+- **Rule-to-shape targeting** (`FOR ?v IN <shape>`) and **rule tuples** (`TUPLE(…)`) — spec-optional / at-risk extensions.
 
 > [!NOTE]
-> This project follows the [SHACL 1.2 Rules specification](https://w3c.github.io/shacl/shacl-rules/). Some features may deviate slightly for improved usability (e.g., allowing BIND inside negation blocks).
+> This project tracks the [SHACL 1.2 Rules specification](https://w3c.github.io/shacl/shacl-rules/) and the [`w3c/data-shapes`](https://github.com/w3c/data-shapes) test suite. Syntax and semantics are validated against those rules fixtures.
 
 ## Architecture
 

@@ -1,6 +1,9 @@
 import { CstNode, IToken } from 'chevrotain';
 import { parseSRL } from './parser';
 
+// The IRI that the Turtle `a` shorthand expands to.
+const RDF_TYPE_IRI = 'http://www.w3.org/1999/02/22-rdf-syntax-ns#type';
+
 export interface SourceLocation {
   startLine: number;
   startColumn: number;
@@ -45,8 +48,8 @@ export interface FilterElement {
   location?: SourceLocation;
 }
 
-export interface BindElement {
-  type: 'bind';
+export interface AssignmentElement {
+  type: 'assignment';
   expression: Expression;
   variable: string;
   location?: SourceLocation;
@@ -58,7 +61,7 @@ export interface NegationElement {
   location?: SourceLocation;
 }
 
-export type BodyElement = TriplePattern | FilterElement | BindElement | NegationElement;
+export type BodyElement = TriplePattern | FilterElement | AssignmentElement | NegationElement;
 
 export interface RuleHead {
   patterns: TriplePattern[];
@@ -95,13 +98,7 @@ export interface InverseDeclaration {
   location?: SourceLocation;
 }
 
-export interface ReflexiveDeclaration {
-  type: 'reflexive';
-  property: string;
-  location?: SourceLocation;
-}
-
-export type Declaration = TransitiveDeclaration | SymmetricDeclaration | InverseDeclaration | ReflexiveDeclaration;
+export type Declaration = TransitiveDeclaration | SymmetricDeclaration | InverseDeclaration;
 
 export interface DataBlock {
   type: 'data';
@@ -172,21 +169,13 @@ export interface InExpression {
   negated: boolean;
 }
 
-export interface ExistsExpression {
-  type: 'exists';
-  patterns: BodyElement[];
-  negated: boolean;
-}
-
 // Path Expression Types
+// SHACL 1.2 Rules paths cover only sequence (`/`) and inverse (`^`) — the ones
+// that expand into triple patterns. There is no `*`/`+`/`?`, no alternative,
+// and no negated property set.
 export interface PathIRI {
   pathType: 'iri';
   value: string;
-}
-
-export interface PathVariable {
-  pathType: 'variable';
-  name: string;
 }
 
 export interface PathSequence {
@@ -194,56 +183,24 @@ export interface PathSequence {
   elements: PathExpression[];
 }
 
-export interface PathAlternative {
-  pathType: 'alternative';
-  options: PathExpression[];
-}
-
 export interface PathInverse {
   pathType: 'inverse';
   path: PathExpression;
 }
 
-export interface PathZeroOrMore {
-  pathType: 'zeroOrMore';
-  path: PathExpression;
-}
+export type PathExpression =
+  | PathIRI
+  | PathSequence
+  | PathInverse;
 
-export interface PathOneOrMore {
-  pathType: 'oneOrMore';
-  path: PathExpression;
-}
-
-export interface PathZeroOrOne {
-  pathType: 'zeroOrOne';
-  path: PathExpression;
-}
-
-export interface PathNegatedPropertySet {
-  pathType: 'negatedPropertySet';
-  iris: Array<{ iri: string; inverse: boolean }>;
-}
-
-export type PathExpression = 
-  | PathIRI 
-  | PathVariable
-  | PathSequence 
-  | PathAlternative 
-  | PathInverse 
-  | PathZeroOrMore 
-  | PathOneOrMore 
-  | PathZeroOrOne
-  | PathNegatedPropertySet;
-
-export type Expression = 
-  | BinaryExpression 
-  | UnaryExpression 
-  | FunctionCall 
-  | VariableExpression 
+export type Expression =
+  | BinaryExpression
+  | UnaryExpression
+  | FunctionCall
+  | VariableExpression
   | LiteralExpression
   | IRIExpression
-  | InExpression
-  | ExistsExpression;
+  | InExpression;
 
 interface CSTChildren {
   [key: string]: (CstNode | IToken)[];
@@ -356,51 +313,36 @@ export class ASTBuilder {
 
   private visitRule(node: CstNode): Rule {
     const children = node.children as CSTChildren;
-    
+
     if (children.rule1) {
       return this.visitRule1(children.rule1[0] as CstNode);
     } else if (children.rule2) {
       return this.visitRule2(children.rule2[0] as CstNode);
-    } else if (children.rule3) {
-      return this.visitRule3(children.rule3[0] as CstNode);
     }
-    
+
     throw new Error('Unknown rule type');
   }
 
+  // Rule1 (`RULE iri? { head } WHERE { body }`) and Rule2 (`IF { body } THEN
+  // { head }`) build the same Rule; only Rule1 carries an optional naming IRI
+  // (absent in the Rule2 CST, so reading it unconditionally yields undefined).
   private visitRule1(node: CstNode): Rule {
-    const children = node.children as CSTChildren;
-    const headNode = children.headTemplate?.[0] as CstNode;
-    const bodyNode = children.bodyPattern?.[0] as CstNode;
-    
-    return {
-      type: 'rule',
-      head: this.visitHeadTemplate(headNode),
-      body: this.visitBodyPattern(bodyNode),
-      location: getLocationFromNode(node),
-    };
+    return this.buildRule(node);
   }
 
   private visitRule2(node: CstNode): Rule {
-    const children = node.children as CSTChildren;
-    const bodyNode = children.bodyPattern?.[0] as CstNode;
-    const headNode = children.headTemplate?.[0] as CstNode;
-    
-    return {
-      type: 'rule',
-      head: this.visitHeadTemplate(headNode),
-      body: this.visitBodyPattern(bodyNode),
-      location: getLocationFromNode(node),
-    };
+    return this.buildRule(node);
   }
 
-  private visitRule3(node: CstNode): Rule {
+  private buildRule(node: CstNode): Rule {
     const children = node.children as CSTChildren;
     const headNode = children.headTemplate?.[0] as CstNode;
     const bodyNode = children.bodyPattern?.[0] as CstNode;
-    
+    const nameNode = children.iriRef?.[0] as CstNode | undefined;
+
     return {
       type: 'rule',
+      name: nameNode ? this.visitIriRef(nameNode) : undefined,
       head: this.visitHeadTemplate(headNode),
       body: this.visitBodyPattern(bodyNode),
       location: getLocationFromNode(node),
@@ -409,7 +351,7 @@ export class ASTBuilder {
 
   private visitDeclaration(node: CstNode): Declaration {
     const children = node.children as CSTChildren;
-    
+
     if (children.Transitive) {
       const iriNode = children.iriRef?.[0] as CstNode;
       return {
@@ -418,6 +360,7 @@ export class ASTBuilder {
         location: getLocationFromNode(node),
       };
     } else if (children.Symmetric) {
+      // Postfix form: '(' iri ')' SYMMETRIC
       const iriNode = children.iriRef?.[0] as CstNode;
       return {
         type: 'symmetric',
@@ -432,15 +375,8 @@ export class ASTBuilder {
         property2: this.visitIriRef(iriNodes[1]),
         location: getLocationFromNode(node),
       };
-    } else if (children.Reflexive) {
-      const iriNode = children.iriRef?.[0] as CstNode;
-      return {
-        type: 'reflexive',
-        property: this.visitIriRef(iriNode),
-        location: getLocationFromNode(node),
-      };
     }
-    
+
     throw new Error('Unknown declaration type');
   }
 
@@ -488,17 +424,28 @@ export class ASTBuilder {
     return patterns;
   }
 
+  // Template family (head + DATA): predicate is a term (IRI, variable, or `a`).
   private visitTriplesSameSubject(node: CstNode): TriplePattern[] {
+    return this.buildTriples(node, 'template');
+  }
+
+  // Pattern family (rule bodies): predicate may be a property path or a variable.
+  private visitTriplesSameSubjectPattern(node: CstNode): TriplePattern[] {
+    return this.buildTriples(node, 'pattern');
+  }
+
+  private buildTriples(node: CstNode, family: 'template' | 'pattern'): TriplePattern[] {
     const children = node.children as CSTChildren;
     const patterns: TriplePattern[] = [];
-    
+
     const varOrTermNode = children.varOrTerm?.[0] as CstNode | undefined;
-    const predicateObjectListNode = children.predicateObjectList?.[0] as CstNode | undefined;
-    
-    if (varOrTermNode && predicateObjectListNode) {
+    const podKey = family === 'template' ? 'predicateObjectListTemplate' : 'predicateObjectListPattern';
+    const podListNode = children[podKey]?.[0] as CstNode | undefined;
+
+    if (varOrTermNode && podListNode) {
       const subject = this.visitVarOrTerm(varOrTermNode);
-      const predicateObjects = this.visitPredicateObjectList(predicateObjectListNode);
-      
+      const predicateObjects = this.visitPredicateObjectList(podListNode, family);
+
       for (const { predicate, objects } of predicateObjects) {
         for (const object of objects) {
           patterns.push({
@@ -510,165 +457,114 @@ export class ASTBuilder {
         }
       }
     }
-    
+
     return patterns;
   }
 
-  private visitPredicateObjectList(node: CstNode): Array<{ predicate: RDFTerm | PathExpression; objects: RDFTerm[] }> {
+  private visitPredicateObjectList(
+    node: CstNode,
+    family: 'template' | 'pattern'
+  ): Array<{ predicate: RDFTerm | PathExpression; objects: RDFTerm[] }> {
     const children = node.children as CSTChildren;
     const result: Array<{ predicate: RDFTerm | PathExpression; objects: RDFTerm[] }> = [];
-    
-    const verbNodes = children.verb as CstNode[] | undefined;
+
+    const verbNodes = (family === 'template' ? children.verbTemplate : children.verbPattern) as
+      | CstNode[]
+      | undefined;
     const objectListNodes = children.objectList as CstNode[] | undefined;
-    
+
     if (verbNodes && objectListNodes) {
       for (let i = 0; i < verbNodes.length && i < objectListNodes.length; i++) {
-        const predicate = this.visitVerb(verbNodes[i]);
+        const predicate =
+          family === 'template' ? this.visitVerbTemplate(verbNodes[i]) : this.visitVerbPattern(verbNodes[i]);
         const objects = this.visitObjectList(objectListNodes[i]);
         result.push({ predicate, objects });
       }
     }
-    
+
     return result;
   }
 
-  private visitVerb(node: CstNode): RDFTerm | PathExpression {
+  // VerbTemplate = 'a' | VarOrIri
+  private visitVerbTemplate(node: CstNode): RDFTerm {
     const children = node.children as CSTChildren;
-    
+
     if (children.RdfType) {
-      return {
-        termType: 'iri',
-        value: 'http://www.w3.org/1999/02/22-rdf-syntax-ns#type',
-      };
-    } else if (children.pathExpression) {
-      return this.visitPathExpression(children.pathExpression[0] as CstNode);
+      return { termType: 'iri', value: RDF_TYPE_IRI };
+    } else if (children.varOrIri) {
+      return this.visitVarOrIri(children.varOrIri[0] as CstNode);
     }
-    
-    throw new Error('Unknown verb type');
+
+    throw new Error('Unknown verb template type');
   }
 
-  private visitPathExpression(node: CstNode): RDFTerm | PathExpression {
+  // VerbPattern = Var | Path
+  private visitVerbPattern(node: CstNode): RDFTerm | PathExpression {
     const children = node.children as CSTChildren;
-    const pathAltNode = children.pathAlternative?.[0] as CstNode;
-    return this.visitPathAlternative(pathAltNode);
+
+    if (children.variable) {
+      return this.visitVariable(children.variable[0] as CstNode);
+    } else if (children.path) {
+      return this.visitPath(children.path[0] as CstNode);
+    }
+
+    throw new Error('Unknown verb pattern type');
   }
 
-  private visitPathAlternative(node: CstNode): RDFTerm | PathExpression {
+  // Path = PathSequence. Returns a plain IRI term when the path is a single IRI
+  // (so simple predicates flow through the ordinary triple-matching path).
+  private visitPath(node: CstNode): RDFTerm | PathExpression {
     const children = node.children as CSTChildren;
-    const seqNodes = children.pathSequence as CstNode[];
-    
-    if (seqNodes.length === 1) {
-      return this.visitPathSequence(seqNodes[0]);
-    }
-    
-    const options = seqNodes.map(n => this.visitPathSequence(n));
-    // If all options are simple paths (single elements), check if they can be simplified
-    const allPaths = options.map(o => this.toPathExpression(o));
-    
-    return {
-      pathType: 'alternative',
-      options: allPaths,
-    };
+    return this.visitPathSequence(children.pathSequence[0] as CstNode);
   }
 
   private visitPathSequence(node: CstNode): RDFTerm | PathExpression {
     const children = node.children as CSTChildren;
     const eltNodes = children.pathEltOrInverse as CstNode[];
-    
+
     if (eltNodes.length === 1) {
       return this.visitPathEltOrInverse(eltNodes[0]);
     }
-    
-    const elements = eltNodes.map(n => this.visitPathEltOrInverse(n));
-    const allPaths = elements.map(e => this.toPathExpression(e));
-    
+
+    const elements = eltNodes.map(n => this.toPathExpression(this.visitPathEltOrInverse(n)));
+
     return {
       pathType: 'sequence',
-      elements: allPaths,
+      elements,
     };
   }
 
   private visitPathEltOrInverse(node: CstNode): RDFTerm | PathExpression {
     const children = node.children as CSTChildren;
     const isInverse = !!children.Caret;
-    const pathEltNode = children.pathElt?.[0] as CstNode;
-    const elt = this.visitPathElt(pathEltNode);
-    
+    const elt = this.visitPathElt(children.pathElt?.[0] as CstNode);
+
     if (isInverse) {
       return {
         pathType: 'inverse',
         path: this.toPathExpression(elt),
       };
     }
-    
+
     return elt;
   }
 
+  // PathElt = iri | 'a' | '(' Path ')'
   private visitPathElt(node: CstNode): RDFTerm | PathExpression {
     const children = node.children as CSTChildren;
-    const primaryNode = children.pathPrimary?.[0] as CstNode;
-    const modNode = children.pathMod?.[0] as CstNode | undefined;
-    
-    let primary = this.visitPathPrimary(primaryNode);
-    
-    if (modNode) {
-      const mod = this.visitPathMod(modNode);
-      const path = this.toPathExpression(primary);
-      
-      switch (mod) {
-        case '?':
-          return { pathType: 'zeroOrOne', path };
-        case '*':
-          return { pathType: 'zeroOrMore', path };
-        case '+':
-          return { pathType: 'oneOrMore', path };
-      }
-    }
-    
-    return primary;
-  }
 
-  private visitPathMod(node: CstNode): '?' | '*' | '+' {
-    const children = node.children as CSTChildren;
-    if (children.QuestionMark) return '?';
-    if (children.Asterisk) return '*';
-    if (children.Plus) return '+';
-    throw new Error('Unknown path modifier');
-  }
-
-  private visitPathPrimary(node: CstNode): RDFTerm | PathExpression {
-    const children = node.children as CSTChildren;
-    
-    if (children.pathExpression) {
-      return this.visitPathExpression(children.pathExpression[0] as CstNode);
-    } else if (children.Bang && children.pathNegatedPropertySet) {
-      return this.visitPathNegatedPropertySet(children.pathNegatedPropertySet[0] as CstNode);
-    } else if (children.varOrIri) {
-      return this.visitVarOrIri(children.varOrIri[0] as CstNode);
+    if (children.path) {
+      return this.visitPath(children.path[0] as CstNode);
+    } else if (children.RdfType) {
+      return { termType: 'iri', value: RDF_TYPE_IRI };
+    } else if (children.iriRef) {
+      return {
+        termType: 'iri',
+        value: this.visitIriRef(children.iriRef[0] as CstNode),
+      };
     }
-    
-    throw new Error('Unknown path primary type');
-  }
 
-  private visitPathNegatedPropertySet(node: CstNode): PathExpression {
-    const children = node.children as CSTChildren;
-    const iris: Array<{ iri: string; inverse: boolean }> = [];
-    
-    if (children.pathOneInPropertySet) {
-      for (const propNode of children.pathOneInPropertySet as CstNode[]) {
-        const propChildren = propNode.children as CSTChildren;
-        const isInverse = !!propChildren.Caret;
-        const iriNode = propChildren.iriRef?.[0] as CstNode;
-        if (iriNode) {
-          iris.push({ iri: this.visitIriRef(iriNode), inverse: isInverse });
-        }
-      }
-    }
-    
-    return {
-      pathType: 'negatedPropertySet',
-      iris,
-    };
+    throw new Error('Unknown path element type');
   }
 
   private toPathExpression(term: RDFTerm | PathExpression): PathExpression {
@@ -677,9 +573,6 @@ export class ASTBuilder {
     }
     if (term.termType === 'iri') {
       return { pathType: 'iri', value: term.value };
-    }
-    if (term.termType === 'variable') {
-      return { pathType: 'variable', name: term.value };
     }
     throw new Error(`Cannot convert ${term.termType} to path expression`);
   }
@@ -714,12 +607,12 @@ export class ASTBuilder {
 
   private visitObjectTerm(node: CstNode): RDFTerm {
     const children = node.children as CSTChildren;
-    
+
     if (children.varOrTerm) {
       return this.visitVarOrTerm(children.varOrTerm[0] as CstNode);
     }
-    
-    throw new Error('Reified triples not yet supported');
+
+    throw new Error('Unknown object term type');
   }
 
   private visitVarOrTerm(node: CstNode): RDFTerm {
@@ -920,21 +813,19 @@ export class ASTBuilder {
 
   private visitBodyBasic(node: CstNode): BodyElement[] {
     const children = node.children as CSTChildren;
-    
+
     if (children.bodyNotTriples) {
       return [this.visitBodyNotTriples(children.bodyNotTriples[0] as CstNode)];
-    } else if (children.triplesTemplate) {
-      return this.visitTriplesTemplate(children.triplesTemplate[0] as CstNode);
-    } else if (children.triplesSameSubjectWithContinuation) {
-      return this.visitTriplesSameSubject(children.triplesSameSubjectWithContinuation[0] as CstNode);
+    } else if (children.triplesSameSubjectPattern) {
+      return this.visitTriplesSameSubjectPattern(children.triplesSameSubjectPattern[0] as CstNode);
     }
-    
+
     return [];
   }
 
   private visitBodyNotTriples(node: CstNode): BodyElement {
     const children = node.children as CSTChildren;
-    
+
     if (children.filterClause) {
       return this.visitFilterClause(children.filterClause[0] as CstNode);
     } else if (children.negation) {
@@ -942,14 +833,40 @@ export class ASTBuilder {
     } else if (children.assignment) {
       return this.visitAssignment(children.assignment[0] as CstNode);
     }
-    
+
     throw new Error('Unknown bodyNotTriples type');
+  }
+
+  // A negation body: BodyBasicSeq of triple patterns + FILTERs only.
+  private visitBodyBasicSeq(node: CstNode): BodyElement[] {
+    const children = node.children as CSTChildren;
+    const elements: BodyElement[] = [];
+
+    if (children.bodyBasicElement) {
+      for (const elNode of children.bodyBasicElement) {
+        elements.push(...this.visitBodyBasicElement(elNode as CstNode));
+      }
+    }
+
+    return elements;
+  }
+
+  private visitBodyBasicElement(node: CstNode): BodyElement[] {
+    const children = node.children as CSTChildren;
+
+    if (children.filterClause) {
+      return [this.visitFilterClause(children.filterClause[0] as CstNode)];
+    } else if (children.triplesSameSubjectPattern) {
+      return this.visitTriplesSameSubjectPattern(children.triplesSameSubjectPattern[0] as CstNode);
+    }
+
+    return [];
   }
 
   private visitFilterClause(node: CstNode): FilterElement {
     const children = node.children as CSTChildren;
     const constraintNode = children.constraint?.[0] as CstNode;
-    
+
     return {
       type: 'filter',
       expression: this.visitConstraint(constraintNode),
@@ -959,24 +876,24 @@ export class ASTBuilder {
 
   private visitNegation(node: CstNode): NegationElement {
     const children = node.children as CSTChildren;
-    const bodyPattern1Node = children.bodyPattern1?.[0] as CstNode;
-    
+    const seqNode = children.bodyBasicSeq?.[0] as CstNode | undefined;
+
     return {
       type: 'negation',
-      patterns: this.visitBodyPattern1(bodyPattern1Node),
+      patterns: seqNode ? this.visitBodyBasicSeq(seqNode) : [],
       location: getLocationFromNode(node),
     };
   }
 
-  private visitAssignment(node: CstNode): BindElement {
+  private visitAssignment(node: CstNode): AssignmentElement {
     const children = node.children as CSTChildren;
     const expressionNode = children.expression?.[0] as CstNode;
     const variableNode = children.variable?.[0] as CstNode;
-    
+
     const variable = this.visitVariable(variableNode);
-    
+
     return {
-      type: 'bind',
+      type: 'assignment',
       expression: this.visitExpression(expressionNode),
       variable: variable.value,
       location: getLocationFromNode(node),
@@ -985,14 +902,35 @@ export class ASTBuilder {
 
   private visitConstraint(node: CstNode): Expression {
     const children = node.children as CSTChildren;
-    
+
     if (children.brackettedExpression) {
       return this.visitBrackettedExpression(children.brackettedExpression[0] as CstNode);
     } else if (children.builtInCall) {
       return this.visitBuiltInCall(children.builtInCall[0] as CstNode);
+    } else if (children.functionCall) {
+      return this.visitFunctionCall(children.functionCall[0] as CstNode);
     }
-    
+
     throw new Error('Unknown constraint type');
+  }
+
+  // FunctionCall = iri ArgList — a filter/expression call by full IRI.
+  private visitFunctionCall(node: CstNode): FunctionCall {
+    const children = node.children as CSTChildren;
+    const name = this.visitIriRef(children.iriRef[0] as CstNode);
+    const args: Expression[] = [];
+
+    const exprListNode = children.expressionList?.[0] as CstNode | undefined;
+    if (exprListNode) {
+      const exprListChildren = exprListNode.children as CSTChildren;
+      if (exprListChildren.expression) {
+        for (const exprNode of exprListChildren.expression) {
+          args.push(this.visitExpression(exprNode as CstNode));
+        }
+      }
+    }
+
+    return { type: 'function', name, args };
   }
 
   private visitExpression(node: CstNode): Expression {
@@ -1196,12 +1134,8 @@ export class ASTBuilder {
 
   private visitPrimaryExpression(node: CstNode): Expression {
     const children = node.children as CSTChildren;
-    
-    if (children.existsFunc) {
-      return this.visitExistsFunc(children.existsFunc[0] as CstNode);
-    } else if (children.notExistsFunc) {
-      return this.visitNotExistsFunc(children.notExistsFunc[0] as CstNode);
-    } else if (children.brackettedExpression) {
+
+    if (children.brackettedExpression) {
       return this.visitBrackettedExpression(children.brackettedExpression[0] as CstNode);
     } else if (children.builtInCall) {
       return this.visitBuiltInCall(children.builtInCall[0] as CstNode);
@@ -1227,28 +1161,6 @@ export class ASTBuilder {
     }
     
     throw new Error('Unknown primaryExpression type');
-  }
-
-  private visitExistsFunc(node: CstNode): ExistsExpression {
-    const children = node.children as CSTChildren;
-    const bodyPattern1Node = children.bodyPattern1?.[0] as CstNode;
-    
-    return {
-      type: 'exists',
-      patterns: this.visitBodyPattern1(bodyPattern1Node),
-      negated: false,
-    };
-  }
-
-  private visitNotExistsFunc(node: CstNode): ExistsExpression {
-    const children = node.children as CSTChildren;
-    const bodyPattern1Node = children.bodyPattern1?.[0] as CstNode;
-    
-    return {
-      type: 'exists',
-      patterns: this.visitBodyPattern1(bodyPattern1Node),
-      negated: true,
-    };
   }
 
   private visitBrackettedExpression(node: CstNode): Expression {

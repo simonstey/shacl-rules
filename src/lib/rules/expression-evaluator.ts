@@ -1,6 +1,6 @@
 import { Term, Literal, NamedNode, DataFactory, Store } from 'n3';
-import { Expression, BinaryOperator, UnaryOperator, BodyElement, TriplePattern } from '../srl/ast';
-import { SolutionMapping, joinSolutions, substitutePattern, isVariable } from './pattern-matcher';
+import { Expression, BinaryOperator, UnaryOperator } from '../srl/ast';
+import { SolutionMapping } from './pattern-matcher';
 
 const { namedNode, literal } = DataFactory;
 
@@ -8,7 +8,7 @@ export type EvalResult = Term | boolean | number | string | null;
 
 const XSD = 'http://www.w3.org/2001/XMLSchema#';
 
-// Store reference for EXISTS evaluation (set during rule evaluation)
+// Store reference for pattern evaluation (set during rule evaluation)
 let currentStore: Store | null = null;
 
 export function setCurrentStore(store: Store | null): void {
@@ -17,6 +17,14 @@ export function setCurrentStore(store: Store | null): void {
 
 export function getCurrentStore(): Store | null {
   return currentStore;
+}
+
+// NOW() must return the same instant throughout a single rule-set evaluation
+// (SHACL 1.2 Rules §3.9). The executor pins it once per run.
+let currentNow: Date | null = null;
+
+export function setCurrentNow(now: Date | null): void {
+  currentNow = now;
 }
 
 export function isNumeric(term: Term): boolean {
@@ -132,10 +140,7 @@ export function evaluateExpression(expr: Expression, solution: SolutionMapping):
       
     case 'in':
       return evaluateIn(expr.value, expr.list, expr.negated, solution);
-      
-    case 'exists':
-      return evaluateExists(expr.patterns, expr.negated, solution);
-      
+
     default:
       return null;
   }
@@ -143,39 +148,15 @@ export function evaluateExpression(expr: Expression, solution: SolutionMapping):
 
 function evaluateIn(value: Expression, list: Expression[], negated: boolean, solution: SolutionMapping): boolean {
   const evalValue = evaluateExpression(value, solution);
-  
+
   for (const item of list) {
     const evalItem = evaluateExpression(item, solution);
     if (termsEqual(evalValue, evalItem)) {
       return !negated;
     }
   }
-  
-  return negated;
-}
 
-function evaluateExists(patterns: BodyElement[], negated: boolean, solution: SolutionMapping): boolean {
-  if (!currentStore) {
-    console.warn('EXISTS evaluation requires a store context');
-    return negated;
-  }
-  
-  // Extract triple patterns from body elements
-  const triplePatterns: TriplePattern[] = [];
-  for (const element of patterns) {
-    if ('subject' in element && 'predicate' in element && 'object' in element) {
-      triplePatterns.push(element as TriplePattern);
-    }
-  }
-  
-  // Substitute current solution into patterns
-  const substitutedPatterns = triplePatterns.map(p => substitutePattern(p, solution));
-  
-  // Check if any matches exist
-  const matches = joinSolutions([{}], substitutedPatterns, currentStore);
-  const exists = matches.length > 0;
-  
-  return negated ? !exists : exists;
+  return negated;
 }
 
 function evaluateBinary(
@@ -327,9 +308,6 @@ function evaluateFunction(name: string, args: Expression[], solution: SolutionMa
   const evalArgs = args.map(a => evaluateExpression(a, solution));
   
   switch (name.toUpperCase()) {
-    case 'BOUND':
-      return evalArgs[0] !== null;
-      
     case 'STR':
       return toString(evalArgs[0]);
       
@@ -399,21 +377,11 @@ function evaluateFunction(name: string, args: Expression[], solution: SolutionMa
       return num !== null ? Math.floor(num) : null;
     }
     
-    case 'RAND':
-      return Math.random();
-    
     case 'IF': {
       const condition = toBoolean(evalArgs[0]);
       return condition ? evalArgs[1] : evalArgs[2];
     }
-    
-    case 'COALESCE': {
-      for (const arg of evalArgs) {
-        if (arg !== null) return arg;
-      }
-      return null;
-    }
-    
+
     case 'SAMETERM': {
       const left = evalArgs[0];
       const right = evalArgs[1];
@@ -521,8 +489,10 @@ function evaluateFunction(name: string, args: Expression[], solution: SolutionMa
     }
     
     case 'NOW':
-      return literal(new Date().toISOString(), namedNode(`${XSD}dateTime`));
-    
+      // Pinned once per rule-set evaluation (spec §3.9); falls back to a fresh
+      // instant if evaluated outside an execution run.
+      return literal((currentNow ?? new Date()).toISOString(), namedNode(`${XSD}dateTime`));
+
     case 'UUID':
       return namedNode(`urn:uuid:${crypto.randomUUID()}`);
       
@@ -572,19 +542,11 @@ function evaluateFunction(name: string, args: Expression[], solution: SolutionMa
       return match ? match[0] : '';
     }
     
-    case 'MD5':
-    case 'SHA1':
-    case 'SHA256':
-    case 'SHA384':
-    case 'SHA512': {
-      // Hash functions require async, return placeholder for now
-      // In a real implementation, use Web Crypto API with async evaluation
-      console.warn(`Hash function ${name} requires async evaluation - returning placeholder`);
-      return `[${name}:${toString(evalArgs[0]).substring(0, 10)}...]`;
-    }
-    
     default:
-      console.warn(`Unknown function: ${name}`);
+      // Not a SHACL 1.2 Rules built-in (production [121]). BOUND, RAND, COALESCE
+      // and the hash functions (MD5/SHA*) are intentionally absent — the
+      // validator reports these as errors before execution.
+      console.warn(`Unknown or unsupported function: ${name}`);
       return null;
   }
 }
