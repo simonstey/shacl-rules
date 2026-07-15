@@ -13,13 +13,30 @@ interface ExamplesSidebarProps {
   onSelectExample: (example: Example) => void;
   isCollapsed?: boolean;
   onToggleCollapse?: () => void;
+  theme?: 'light' | 'dark';
 }
 
 export function ExamplesSidebar({
   onSelectExample,
   isCollapsed = false,
   onToggleCollapse,
+  theme = 'dark',
 }: ExamplesSidebarProps) {
+  const isDark = theme === 'dark';
+  // Neutral chrome reads from CSS-variable tokens (bg-surface-2, text-ink-*,
+  // border-border) so both themes share one source of truth — no per-value
+  // ternary. Only the selection accent tint stays theme-conditional.
+  const panelBg = 'bg-surface-2';
+  const panelBorder = 'border-border';
+  const headingText = 'text-ink';
+  const bodyText = 'text-ink-2';
+  const mutedText = 'text-ink-muted';
+  const hoverBg = 'hover:bg-surface-3';
+  const iconBtn = 'hover:bg-surface-3 text-ink-2';
+  // Selected uses an accent tint (distinct from the neutral hover bg) instead
+  // of the previous banned colored left border.
+  const selectedBg = isDark ? 'bg-blue-500/15' : 'bg-blue-50';
+  const inputStyle = 'bg-surface-3 border-border-2 text-ink placeholder-ink-muted';
   const [searchQuery, setSearchQuery] = useState('');
   const [expandedCategories, setExpandedCategories] = useState<Set<ExampleCategory>>(
     new Set(['basic-inference'])
@@ -66,10 +83,11 @@ export function ExamplesSidebar({
 
   if (isCollapsed) {
     return (
-      <div className="w-12 h-full bg-zinc-900 border-r border-zinc-800 flex flex-col items-center py-4">
+      <div className={`w-12 h-full ${panelBg} border-r ${panelBorder} flex flex-col items-center py-4`}>
         <button
           onClick={onToggleCollapse}
-          className="p-2 hover:bg-zinc-800 rounded-lg transition-colors"
+          aria-label="Expand examples sidebar"
+          className={`p-2 rounded-lg transition-colors ${iconBtn}`}
           title="Expand sidebar"
         >
           <svg
@@ -91,14 +109,15 @@ export function ExamplesSidebar({
   }
 
   return (
-    <div className="w-72 h-full bg-zinc-900 border-r border-zinc-800 flex flex-col">
+    <aside className={`w-72 h-full ${panelBg} border-r ${panelBorder} flex flex-col`} aria-label="Examples">
       {/* Header */}
-      <div className="p-4 border-b border-zinc-800 flex items-center justify-between">
-        <h2 className="font-semibold text-zinc-100">Examples</h2>
+      <div className={`p-4 border-b ${panelBorder} flex items-center justify-between`}>
+        <h2 className={`font-semibold ${headingText}`}>Examples</h2>
         {onToggleCollapse && (
           <button
             onClick={onToggleCollapse}
-            className="p-1 hover:bg-zinc-800 rounded transition-colors"
+            aria-label="Collapse examples sidebar"
+            className={`p-1.5 rounded transition-colors ${iconBtn}`}
             title="Collapse sidebar"
           >
             <svg
@@ -119,13 +138,14 @@ export function ExamplesSidebar({
       </div>
 
       {/* Search */}
-      <div className="p-3 border-b border-zinc-800">
+      <div className={`p-3 border-b ${panelBorder}`}>
         <input
           type="text"
+          aria-label="Search examples"
           placeholder="Search examples..."
           value={searchQuery}
           onChange={(e) => setSearchQuery(e.target.value)}
-          className="w-full px-3 py-2 bg-zinc-800 border border-zinc-700 rounded-lg text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+          className={`w-full px-3 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent ${inputStyle}`}
         />
       </div>
 
@@ -139,14 +159,15 @@ export function ExamplesSidebar({
           const categoryInfo = exampleCategories[category];
 
           return (
-            <div key={category} className="border-b border-zinc-800">
+            <div key={category} className={`border-b ${panelBorder}`}>
               <button
                 onClick={() => toggleCategory(category)}
-                className="w-full px-4 py-3 flex items-center justify-between hover:bg-zinc-800 transition-colors text-left"
+                aria-expanded={isExpanded}
+                className={`w-full px-4 py-3 flex items-center justify-between transition-colors text-left ${hoverBg}`}
               >
                 <div>
-                  <div className="font-medium text-zinc-200 text-sm">{categoryInfo.name}</div>
-                  <div className="text-xs text-zinc-500">{categoryExamples.length} examples</div>
+                  <div className="font-medium text-sm text-ink">{categoryInfo.name}</div>
+                  <div className={`text-xs ${mutedText}`}>{categoryExamples.length} examples</div>
                 </div>
                 <svg
                   xmlns="http://www.w3.org/2000/svg"
@@ -158,7 +179,7 @@ export function ExamplesSidebar({
                   strokeWidth="2"
                   strokeLinecap="round"
                   strokeLinejoin="round"
-                  className={`text-zinc-500 transition-transform ${isExpanded ? 'rotate-90' : ''}`}
+                  className={`${mutedText} transition-transform ${isExpanded ? 'rotate-90' : ''}`}
                 >
                   <path d="m9 18 6-6-6-6" />
                 </svg>
@@ -166,24 +187,28 @@ export function ExamplesSidebar({
 
               {isExpanded && (
                 <div className="pb-2">
-                  {categoryExamples.map((example) => (
-                    <button
-                      key={example.id}
-                      onClick={() => handleSelectExample(example)}
-                      className={`w-full px-6 py-2 text-left hover:bg-zinc-800 transition-colors ${
-                        selectedExampleId === example.id ? 'bg-zinc-800 border-l-2 border-blue-500' : ''
-                      }`}
-                    >
-                      <div className="text-sm text-zinc-300">{example.title}</div>
-                      <div className="text-xs text-zinc-500 line-clamp-1">{example.description}</div>
-                    </button>
-                  ))}
+                  {categoryExamples.map((example) => {
+                    const isSelected = selectedExampleId === example.id;
+                    return (
+                      <button
+                        key={example.id}
+                        onClick={() => handleSelectExample(example)}
+                        aria-current={isSelected ? 'true' : undefined}
+                        className={`w-full px-6 py-2 text-left transition-colors ${
+                          isSelected ? `${selectedBg} font-medium` : hoverBg
+                        }`}
+                      >
+                        <div className={`text-sm ${bodyText}`}>{example.title}</div>
+                        <div className={`text-xs ${mutedText} line-clamp-1`}>{example.description}</div>
+                      </button>
+                    );
+                  })}
                 </div>
               )}
             </div>
           );
         })}
       </div>
-    </div>
+    </aside>
   );
 }

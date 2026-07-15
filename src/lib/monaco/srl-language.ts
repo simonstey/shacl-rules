@@ -412,6 +412,19 @@ export const srlLightTheme: MonacoEditor.editor.IStandaloneThemeData = {
   },
 };
 
+/**
+ * Registers the shared `srl-dark` / `srl-light` editor themes.
+ *
+ * Monaco's active theme is GLOBAL — a single theme applies to every editor
+ * instance. Both the SRL and RDF editors must therefore use the same theme
+ * names, or whichever editor renders last clobbers the other's colors. This is
+ * idempotent (`defineTheme` overwrites) and safe to call from every editor.
+ */
+export function registerSRLThemes(monaco: Monaco) {
+  monaco.editor.defineTheme("srl-dark", srlTheme);
+  monaco.editor.defineTheme("srl-light", srlLightTheme);
+}
+
 export function registerSRLLanguage(monaco: Monaco) {
   monaco.languages.register({ id: SRL_LANGUAGE_ID });
   monaco.languages.setLanguageConfiguration(
@@ -422,8 +435,7 @@ export function registerSRLLanguage(monaco: Monaco) {
     SRL_LANGUAGE_ID,
     srlMonarchTokensProvider
   );
-  monaco.editor.defineTheme("srl-dark", srlTheme);
-  monaco.editor.defineTheme("srl-light", srlLightTheme);
+  registerSRLThemes(monaco);
 
   // Register hover provider
   monaco.languages.registerHoverProvider(SRL_LANGUAGE_ID, {

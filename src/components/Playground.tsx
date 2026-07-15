@@ -4,10 +4,11 @@ import { useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import dynamic from 'next/dynamic';
 import type { Monaco } from '@monaco-editor/react';
 import type { editor } from 'monaco-editor';
-import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels';
+import { Panel, PanelGroup } from 'react-resizable-panels';
 import { Example } from '@/lib/examples';
 import { useValidation } from '@/lib/validation';
 import { useRuleExecution } from '@/lib/rules/useRuleExecution';
+import { useMediaQuery } from '@/lib/useMediaQuery';
 import { ExamplesSidebar, ValidationPanel, FileUpload, InferredTriplesPanel } from '@/components';
 import { ResizablePanels, ResizeHandle } from './ResizablePanels';
 import { SyntaxBreakdown } from './SyntaxBreakdown';
@@ -19,8 +20,8 @@ type RightPanelTab = 'validation' | 'inferred';
 const SRLEditor = dynamic(() => import('@/components/SRLEditor').then((mod) => mod.SRLEditor), {
   ssr: false,
   loading: () => (
-    <div className="h-full flex items-center justify-center bg-zinc-900">
-      <div className="text-zinc-500">Loading editor...</div>
+    <div className="h-full flex items-center justify-center bg-surface">
+      <div className="text-ink-muted">Loading editor...</div>
     </div>
   ),
 });
@@ -28,8 +29,8 @@ const SRLEditor = dynamic(() => import('@/components/SRLEditor').then((mod) => m
 const RDFEditor = dynamic(() => import('@/components/RDFEditor').then((mod) => mod.RDFEditor), {
   ssr: false,
   loading: () => (
-    <div className="h-full flex items-center justify-center bg-zinc-900">
-      <div className="text-zinc-500">Loading editor...</div>
+    <div className="h-full flex items-center justify-center bg-surface">
+      <div className="text-ink-muted">Loading editor...</div>
     </div>
   ),
 });
@@ -71,19 +72,26 @@ export function Playground() {
   const [srlCode, setSrlCode] = useState(DEFAULT_SRL);
   const [rdfData, setRdfData] = useState(DEFAULT_RDF);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  // Start dark to match the server-rendered markup (avoids hydration mismatch);
+  // the real preference is resolved on mount in the effect below.
   const [theme, setTheme] = useState<'light' | 'dark'>('dark');
   const [showSyntaxPanel, setShowSyntaxPanel] = useState(true);
   const [showDiagramPanel, setShowDiagramPanel] = useState(false);
   const [activeRightTab, setActiveRightTab] = useState<RightPanelTab>('validation');
   const [highlightedRuleIndex, setHighlightedRuleIndex] = useState<number | null>(null);
   const [highlightedGrammarRule, setHighlightedGrammarRule] = useState<string | null>(null);
-  
-  const srlEditorRef = useRef<{ editor: editor.IStandaloneCodeEditor | null; monaco: Monaco | null }>({ 
+
+  // Below this width the side-by-side editor/results layout stops being usable,
+  // so panels stack vertically and the sidebar collapses.
+  const isNarrow = useMediaQuery('(max-width: 900px)');
+
+  const srlEditorRef = useRef<{ editor: editor.IStandaloneCodeEditor | null; monaco: Monaco | null }>({
     editor: null, 
     monaco: null 
   });
   
   const ruleDecorationsRef = useRef<string[]>([]);
+  const tokenDecorationsRef = useRef<string[]>([]);
 
   const { result, isValidating, validate } = useValidation();
   const { 
@@ -102,6 +110,34 @@ export function Playground() {
   useEffect(() => {
     validate(srlCode);
   }, [srlCode, validate]);
+
+  // Initialize theme from the client environment once on mount. We render the
+  // server default (dark) first and correct here, so the initial client render
+  // matches the SSR markup (no hydration mismatch); a lazy useState initializer
+  // reading localStorage would desync the two.
+  useEffect(() => {
+    const saved = localStorage.getItem('srl-theme');
+    if (saved === 'light' || saved === 'dark') {
+      setTheme(saved);
+    } else if (window.matchMedia('(prefers-color-scheme: light)').matches) {
+      setTheme('light');
+    }
+  }, []);
+
+  // Auto-collapse the sidebar when the viewport becomes narrow (and restore it
+  // when it widens again). Reactive to viewport changes, not just first load.
+  useEffect(() => {
+    setSidebarCollapsed(isNarrow);
+  }, [isNarrow]);
+
+  // Drive the theme via a class on <html> so global CSS (scrollbars, tokens)
+  // and the in-app toggle share a single source of truth, and persist the choice.
+  useEffect(() => {
+    const root = document.documentElement;
+    root.classList.toggle('dark', theme === 'dark');
+    root.classList.toggle('light', theme === 'light');
+    localStorage.setItem('srl-theme', theme);
+  }, [theme]);
 
   const handleSelectExample = useCallback((example: Example) => {
     setSrlCode(example.srlCode);
@@ -173,17 +209,22 @@ export function Playground() {
     const { editor, monaco } = srlEditorRef.current;
     if (!editor || !monaco) return;
 
-    if (range) {
-      editor.deltaDecorations([], [
-        {
-          range: new monaco.Range(range.startLine, range.startColumn, range.endLine, range.endColumn),
-          options: {
-            className: 'syntax-highlight-hover',
-            isWholeLine: false,
-          },
-        },
-      ]);
-    }
+    // Clear the previous hover decoration before adding a new one, otherwise
+    // every hovered token would leave a stale highlight behind.
+    tokenDecorationsRef.current = editor.deltaDecorations(
+      tokenDecorationsRef.current,
+      range
+        ? [
+            {
+              range: new monaco.Range(range.startLine, range.startColumn, range.endLine, range.endColumn),
+              options: {
+                className: 'syntax-highlight-hover',
+                isWholeLine: false,
+              },
+            },
+          ]
+        : []
+    );
   }, []);
 
   const handleTokenClick = useCallback((range: { startLine: number; startColumn: number; endLine: number; endColumn: number }) => {
@@ -212,17 +253,11 @@ export function Playground() {
   }, []);
 
   return (
-    <div className={`h-screen flex flex-col ${theme === 'dark' ? 'bg-zinc-950' : 'bg-zinc-100'}`}>
+    <div className="h-screen flex flex-col bg-surface">
       {/* Header */}
-      <header
-        className={`h-12 px-4 flex items-center justify-between border-b shrink-0 ${
-          theme === 'dark' ? 'bg-zinc-900 border-zinc-800' : 'bg-white border-zinc-200'
-        }`}
-      >
+      <header className="h-12 px-4 flex items-center justify-between border-b shrink-0 bg-surface-2 border-border">
         <div className="flex items-center gap-3">
-          <h1
-            className={`text-base font-semibold ${theme === 'dark' ? 'text-zinc-100' : 'text-zinc-900'}`}
-          >
+          <h1 className="text-base font-semibold text-ink">
             SHACL Rules Playground
           </h1>
           <span
@@ -243,12 +278,10 @@ export function Playground() {
             disabled={isExecuting || !result?.isValid}
             className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
               isExecuting
-                ? theme === 'dark' ? 'bg-zinc-700 text-zinc-400 cursor-wait' : 'bg-zinc-200 text-zinc-500 cursor-wait'
+                ? 'bg-surface-3 text-ink-muted cursor-wait'
                 : !result?.isValid
-                ? theme === 'dark' ? 'bg-zinc-700 text-zinc-500 cursor-not-allowed' : 'bg-zinc-200 text-zinc-400 cursor-not-allowed'
-                : theme === 'dark' 
-                  ? 'bg-green-600 hover:bg-green-500 text-white' 
-                  : 'bg-green-600 hover:bg-green-500 text-white'
+                ? 'bg-surface-3 text-ink-muted cursor-not-allowed'
+                : 'bg-green-600 hover:bg-green-500 text-white'
             }`}
             title={!result?.isValid ? 'Fix validation errors first' : 'Execute rules against RDF data'}
           >
@@ -268,10 +301,12 @@ export function Playground() {
           {/* Toggle syntax diagrams panel */}
           <button
             onClick={() => setShowDiagramPanel(!showDiagramPanel)}
+            aria-label={showDiagramPanel ? 'Hide syntax diagrams' : 'Show syntax diagrams'}
+            aria-pressed={showDiagramPanel}
             className={`p-2 rounded-lg transition-colors ${
               showDiagramPanel
                 ? theme === 'dark' ? 'bg-purple-500/20 text-purple-400' : 'bg-purple-100 text-purple-600'
-                : theme === 'dark' ? 'hover:bg-zinc-800 text-zinc-400' : 'hover:bg-zinc-200 text-zinc-600'
+                : 'hover:bg-surface-3 text-ink-muted'
             }`}
             title={showDiagramPanel ? 'Hide syntax diagrams' : 'Show syntax diagrams'}
           >
@@ -297,10 +332,12 @@ export function Playground() {
           {/* Toggle syntax panel */}
           <button
             onClick={() => setShowSyntaxPanel(!showSyntaxPanel)}
+            aria-label={showSyntaxPanel ? 'Hide syntax analysis' : 'Show syntax analysis'}
+            aria-pressed={showSyntaxPanel}
             className={`p-2 rounded-lg transition-colors ${
               showSyntaxPanel
                 ? theme === 'dark' ? 'bg-blue-500/20 text-blue-400' : 'bg-blue-100 text-blue-600'
-                : theme === 'dark' ? 'hover:bg-zinc-800 text-zinc-400' : 'hover:bg-zinc-200 text-zinc-600'
+                : 'hover:bg-surface-3 text-ink-muted'
             }`}
             title={showSyntaxPanel ? 'Hide syntax analysis' : 'Show syntax analysis'}
           >
@@ -322,9 +359,8 @@ export function Playground() {
 
           <button
             onClick={toggleTheme}
-            className={`p-2 rounded-lg transition-colors ${
-              theme === 'dark' ? 'hover:bg-zinc-800 text-zinc-400' : 'hover:bg-zinc-200 text-zinc-600'
-            }`}
+            aria-label={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+            className="p-2 rounded-lg transition-colors hover:bg-surface-3 text-ink-muted"
             title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
           >
             {theme === 'dark' ? (
@@ -370,11 +406,7 @@ export function Playground() {
             href="https://www.w3.org/TR/shacl/"
             target="_blank"
             rel="noopener noreferrer"
-            className={`text-xs px-2 py-1 rounded transition-colors ${
-              theme === 'dark'
-                ? 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800'
-                : 'text-zinc-600 hover:text-zinc-900 hover:bg-zinc-200'
-            }`}
+            className="text-xs px-2 py-1 rounded transition-colors text-ink-muted hover:text-ink hover:bg-surface-3"
           >
             SHACL Spec
           </a>
@@ -388,15 +420,23 @@ export function Playground() {
           onSelectExample={handleSelectExample}
           isCollapsed={sidebarCollapsed}
           onToggleCollapse={() => setSidebarCollapsed(!sidebarCollapsed)}
+          theme={theme}
         />
 
-        {/* Editor area */}
-        <div className="flex-1 overflow-hidden">
-          <PanelGroup direction="horizontal" className="h-full">
+        {/* Editor area. On narrow viewports the whole group stacks vertically
+            (editors above the results panel) so nothing collapses into unusable
+            slivers. The key forces a clean remount when the axis flips, since
+            react-resizable-panels bakes direction into its layout math. */}
+        <main className="flex-1 overflow-hidden">
+          <PanelGroup
+            key={isNarrow ? 'stacked' : 'side-by-side'}
+            direction={isNarrow ? 'vertical' : 'horizontal'}
+            className="h-full"
+          >
             {/* Main editors section */}
-            <Panel defaultSize={75} minSize={40}>
+            <Panel defaultSize={isNarrow ? 60 : 75} minSize={isNarrow ? 30 : 40}>
               <ResizablePanels
-                theme={theme}
+                stacked={isNarrow}
                 leftTitle="Data Graph (Turtle)"
                 rightTitle="Rules (SRL)"
                 bottomTitle={showDiagramPanel ? "Syntax Diagrams" : "Syntax Analysis"}
@@ -436,23 +476,27 @@ export function Playground() {
               />
             </Panel>
 
-            <ResizeHandle direction="horizontal" theme={theme} />
+            <ResizeHandle direction={isNarrow ? 'vertical' : 'horizontal'} />
 
             {/* Right panel with tabs for Validation and Inferred Triples */}
-            <Panel defaultSize={25} minSize={15} maxSize={50}>
-              <div className={`h-full flex flex-col ${
-                theme === 'dark' ? 'bg-zinc-900 border-l border-zinc-800' : 'bg-white border-l border-zinc-200'
-              }`}>
+            <Panel defaultSize={isNarrow ? 40 : 25} minSize={15} maxSize={isNarrow ? 70 : 50}>
+              <div className={`h-full flex flex-col bg-surface-2 border-border ${isNarrow ? 'border-t' : 'border-l'}`}>
                 {/* Tab headers */}
-                <div className={`shrink-0 flex border-b ${
-                  theme === 'dark' ? 'border-zinc-700/50 bg-zinc-900' : 'border-zinc-200 bg-zinc-50'
-                }`}>
+                <div
+                  role="tablist"
+                  aria-label="Results panels"
+                  className="shrink-0 flex border-b border-border bg-surface-2"
+                >
                   <button
+                    role="tab"
+                    id="tab-validation"
+                    aria-selected={activeRightTab === 'validation'}
+                    aria-controls="panel-validation"
                     onClick={() => setActiveRightTab('validation')}
                     className={`flex-1 px-3 py-2 text-xs font-medium transition-colors relative ${
                       activeRightTab === 'validation'
-                        ? theme === 'dark' ? 'text-zinc-100' : 'text-zinc-900'
-                        : theme === 'dark' ? 'text-zinc-500 hover:text-zinc-300' : 'text-zinc-500 hover:text-zinc-700'
+                        ? 'text-ink'
+                        : 'text-ink-muted hover:text-ink'
                     }`}
                   >
                     <span className="flex items-center justify-center gap-1.5">
@@ -478,11 +522,15 @@ export function Playground() {
                     )}
                   </button>
                   <button
+                    role="tab"
+                    id="tab-inferred"
+                    aria-selected={activeRightTab === 'inferred'}
+                    aria-controls="panel-inferred"
                     onClick={() => setActiveRightTab('inferred')}
                     className={`flex-1 px-3 py-2 text-xs font-medium transition-colors relative ${
                       activeRightTab === 'inferred'
-                        ? theme === 'dark' ? 'text-zinc-100' : 'text-zinc-900'
-                        : theme === 'dark' ? 'text-zinc-500 hover:text-zinc-300' : 'text-zinc-500 hover:text-zinc-700'
+                        ? 'text-ink'
+                        : 'text-ink-muted hover:text-ink'
                     }`}
                   >
                     <span className="flex items-center justify-center gap-1.5">
@@ -507,9 +555,14 @@ export function Playground() {
                 </div>
 
                 {/* Tab content */}
-                <div className="flex-1 overflow-hidden">
+                <div
+                  className="flex-1 overflow-hidden"
+                  role="tabpanel"
+                  id={activeRightTab === 'validation' ? 'panel-validation' : 'panel-inferred'}
+                  aria-labelledby={activeRightTab === 'validation' ? 'tab-validation' : 'tab-inferred'}
+                >
                   {activeRightTab === 'validation' ? (
-                    <ValidationPanel result={result} isValidating={isValidating} theme={theme} />
+                    <ValidationPanel result={result} isValidating={isValidating} />
                   ) : (
                     <InferredTriplesPanel
                       result={executionResult}
@@ -524,17 +577,11 @@ export function Playground() {
               </div>
             </Panel>
           </PanelGroup>
-        </div>
+        </main>
       </div>
 
       {/* Status bar */}
-      <footer
-        className={`h-6 px-4 flex items-center justify-between text-[11px] border-t shrink-0 ${
-          theme === 'dark'
-            ? 'bg-zinc-900 border-zinc-800 text-zinc-500'
-            : 'bg-white border-zinc-200 text-zinc-500'
-        }`}
-      >
+      <footer className="h-6 px-4 flex items-center justify-between text-[11px] border-t shrink-0 bg-surface-2 border-border text-ink-muted">
         <span>SHACL 1.2 Rules • Shape Rule Language</span>
         <div className="flex items-center gap-4">
           {isExecuting && (
@@ -556,7 +603,7 @@ export function Playground() {
               Execution error
             </span>
           )}
-          <span className={theme === 'dark' ? 'text-zinc-600' : 'text-zinc-400'}>|</span>
+          <span className="text-border-2">|</span>
           {isValidating && (
             <span className="flex items-center gap-1">
               <svg className="w-3 h-3 animate-spin" viewBox="0 0 24 24" fill="none">

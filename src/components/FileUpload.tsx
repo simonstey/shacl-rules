@@ -7,7 +7,12 @@ interface FileUploadProps {
   accept?: string;
 }
 
-export function FileUpload({ onFileContent, accept = '.ttl,.turtle,.rdf,.jsonld,.json' }: FileUploadProps) {
+// Includes .srl/.shacl so users can upload rule files, not just RDF data — the
+// handler already branches on those extensions.
+export function FileUpload({
+  onFileContent,
+  accept = '.srl,.shacl,.ttl,.turtle,.rdf,.jsonld,.json',
+}: FileUploadProps) {
   const inputRef = useRef<HTMLInputElement>(null);
 
   const handleClick = useCallback(() => {
@@ -43,7 +48,7 @@ export function FileUpload({ onFileContent, accept = '.ttl,.turtle,.rdf,.jsonld,
       />
       <button
         onClick={handleClick}
-        className="px-3 py-1.5 text-sm bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded-lg transition-colors flex items-center gap-2"
+        className="px-3 py-1.5 text-sm rounded-lg transition-colors flex items-center gap-2 bg-surface-3 hover:bg-border text-ink-2"
       >
         <svg
           xmlns="http://www.w3.org/2000/svg"

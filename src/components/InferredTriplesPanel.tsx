@@ -62,33 +62,31 @@ function TripleDisplay({
   return (
     <div 
       className={`flex items-start gap-2 py-1.5 px-2 rounded transition-colors cursor-pointer ${
-        isHighlighted 
-          ? theme === 'dark' ? 'bg-zinc-700/50' : 'bg-zinc-200'
-          : theme === 'dark' ? 'hover:bg-zinc-800/50' : 'hover:bg-zinc-100'
+        isHighlighted
+          ? 'bg-surface-3'
+          : 'hover:bg-surface-3'
       }`}
       onMouseEnter={onMouseEnter}
       onMouseLeave={onMouseLeave}
     >
       <div className="flex-1 font-mono text-xs">
         <span className={theme === 'dark' ? 'text-cyan-400' : 'text-cyan-600'}>{formatted.subject}</span>
-        <span className={theme === 'dark' ? 'text-zinc-500' : 'text-zinc-400'}> </span>
+        <span className="text-ink-muted"> </span>
         <span className={theme === 'dark' ? 'text-yellow-400' : 'text-yellow-600'}>{formatted.predicate}</span>
-        <span className={theme === 'dark' ? 'text-zinc-500' : 'text-zinc-400'}> </span>
+        <span className="text-ink-muted"> </span>
         <span className={theme === 'dark' ? 'text-green-400' : 'text-green-600'}>{formatted.object}</span>
       </div>
-      
+
       <div className="flex items-center gap-1.5 shrink-0">
-        <span 
+        <span
           className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${color.bg} ${color.text} ${color.border} border`}
           title={triple.sourceRule.name}
         >
           R{triple.sourceRule.index + 1}
         </span>
         {triple.iteration > 1 && (
-          <span 
-            className={`text-[10px] px-1 py-0.5 rounded ${
-              theme === 'dark' ? 'bg-zinc-700 text-zinc-400' : 'bg-zinc-200 text-zinc-600'
-            }`}
+          <span
+            className="text-[10px] px-1 py-0.5 rounded bg-surface-3 text-ink-2"
             title={`Generated in iteration ${triple.iteration}`}
           >
             i{triple.iteration}
@@ -146,42 +144,38 @@ function GroupedView({
             className={`rounded-lg border ${
               isHighlighted
                 ? theme === 'dark' ? 'border-blue-500/50 bg-blue-500/5' : 'border-blue-300 bg-blue-50'
-                : theme === 'dark' ? 'border-zinc-700/50 bg-zinc-800/30' : 'border-zinc-200 bg-zinc-50'
+                : 'border-border bg-surface-3/40'
             }`}
             onMouseEnter={() => onRuleHover?.(ruleInfo)}
             onMouseLeave={() => onRuleHover?.(null)}
           >
             <button
               onClick={() => toggleRule(ruleInfo.index)}
-              className={`w-full flex items-center justify-between px-3 py-2 text-left transition-colors ${
-                theme === 'dark' ? 'hover:bg-zinc-700/30' : 'hover:bg-zinc-100'
-              }`}
+              className="w-full flex items-center justify-between px-3 py-2 text-left transition-colors hover:bg-surface-3"
             >
               <div className="flex items-center gap-2">
                 <span className={`text-xs px-1.5 py-0.5 rounded font-medium ${color.bg} ${color.text}`}>
                   R{ruleInfo.index + 1}
                 </span>
-                <span className={`text-sm font-medium ${theme === 'dark' ? 'text-zinc-200' : 'text-zinc-800'}`}>
+                <span className="text-sm font-medium text-ink">
                   {ruleInfo.name}
                 </span>
-                <span className={`text-xs ${theme === 'dark' ? 'text-zinc-500' : 'text-zinc-500'}`}>
+                <span className="text-xs text-ink-muted">
                   ({triples.length} triple{triples.length !== 1 ? 's' : ''})
                 </span>
               </div>
-              <svg 
-                className={`w-4 h-4 transition-transform ${isExpanded ? 'rotate-180' : ''} ${
-                  theme === 'dark' ? 'text-zinc-500' : 'text-zinc-400'
-                }`}
-                fill="none" 
-                viewBox="0 0 24 24" 
+              <svg
+                className={`w-4 h-4 transition-transform text-ink-muted ${isExpanded ? 'rotate-180' : ''}`}
+                fill="none"
+                viewBox="0 0 24 24"
                 stroke="currentColor"
               >
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
               </svg>
             </button>
-            
+
             {isExpanded && (
-              <div className={`border-t ${theme === 'dark' ? 'border-zinc-700/50' : 'border-zinc-200'}`}>
+              <div className="border-t border-border">
                 {triples.map((triple, tripleIndex) => (
                   <TripleDisplay
                     key={tripleIndex}
@@ -238,14 +232,12 @@ export function InferredTriplesPanel({
   
   if (!result) {
     return (
-      <div className={`h-full flex flex-col items-center justify-center p-4 ${
-        theme === 'dark' ? 'text-zinc-500' : 'text-zinc-400'
-      }`}>
+      <div className="h-full flex flex-col items-center justify-center p-4 text-ink-muted">
         <svg className="w-12 h-12 mb-3 opacity-50" fill="none" viewBox="0 0 24 24" stroke="currentColor">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M13 10V3L4 14h7v7l9-11h-7z" />
         </svg>
         <p className="text-sm text-center">
-          Click "Run Rules" to execute the SRL rules<br />
+          Click &ldquo;Run Rules&rdquo; to execute the SRL rules<br />
           against the RDF data graph
         </p>
       </div>
@@ -274,12 +266,10 @@ export function InferredTriplesPanel({
   return (
     <div className="h-full flex flex-col">
       {/* Header */}
-      <div className={`shrink-0 px-3 py-2 border-b ${
-        theme === 'dark' ? 'border-zinc-700/50 bg-zinc-800/50' : 'border-zinc-200 bg-zinc-50'
-      }`}>
+      <div className="shrink-0 px-3 py-2 border-b border-border bg-surface-2">
         <div className="flex items-center justify-between mb-2">
           <div className="flex items-center gap-2">
-            <h3 className={`text-sm font-medium ${theme === 'dark' ? 'text-zinc-200' : 'text-zinc-800'}`}>
+            <h3 className="text-sm font-medium text-ink">
               Inferred Triples
             </h3>
             <span className={`text-xs px-1.5 py-0.5 rounded ${
@@ -288,14 +278,16 @@ export function InferredTriplesPanel({
               {result.inferredTriples.length}
             </span>
           </div>
-          
+
           <div className="flex items-center gap-1">
             <button
               onClick={() => setViewMode('flat')}
+              aria-label="Flat list view"
+              aria-pressed={viewMode === 'flat'}
               className={`p-1.5 rounded transition-colors ${
                 viewMode === 'flat'
-                  ? theme === 'dark' ? 'bg-zinc-700 text-zinc-200' : 'bg-zinc-300 text-zinc-800'
-                  : theme === 'dark' ? 'text-zinc-500 hover:text-zinc-300' : 'text-zinc-400 hover:text-zinc-600'
+                  ? 'bg-surface-3 text-ink'
+                  : 'text-ink-muted hover:text-ink'
               }`}
               title="Flat list view"
             >
@@ -305,10 +297,12 @@ export function InferredTriplesPanel({
             </button>
             <button
               onClick={() => setViewMode('grouped')}
+              aria-label="Grouped by rule"
+              aria-pressed={viewMode === 'grouped'}
               className={`p-1.5 rounded transition-colors ${
                 viewMode === 'grouped'
-                  ? theme === 'dark' ? 'bg-zinc-700 text-zinc-200' : 'bg-zinc-300 text-zinc-800'
-                  : theme === 'dark' ? 'text-zinc-500 hover:text-zinc-300' : 'text-zinc-400 hover:text-zinc-600'
+                  ? 'bg-surface-3 text-ink'
+                  : 'text-ink-muted hover:text-ink'
               }`}
               title="Grouped by rule"
             >
@@ -326,18 +320,13 @@ export function InferredTriplesPanel({
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             placeholder="Filter triples..."
-            className={`w-full text-xs px-2 py-1.5 pl-7 rounded border ${
-              theme === 'dark' 
-                ? 'bg-zinc-800 border-zinc-700 text-zinc-200 placeholder-zinc-500'
-                : 'bg-white border-zinc-300 text-zinc-800 placeholder-zinc-400'
-            } focus:outline-none focus:ring-1 focus:ring-blue-500`}
+            aria-label="Filter triples"
+            className="w-full text-xs px-2 py-1.5 pl-7 rounded border bg-surface-3 border-border-2 text-ink placeholder-ink-muted focus:outline-none focus:ring-1 focus:ring-blue-500"
           />
-          <svg 
-            className={`absolute left-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 ${
-              theme === 'dark' ? 'text-zinc-500' : 'text-zinc-400'
-            }`}
-            fill="none" 
-            viewBox="0 0 24 24" 
+          <svg
+            className="absolute left-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-ink-muted"
+            fill="none"
+            viewBox="0 0 24 24"
             stroke="currentColor"
           >
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
@@ -346,9 +335,7 @@ export function InferredTriplesPanel({
       </div>
       
       {/* Stats bar */}
-      <div className={`shrink-0 px-3 py-1.5 text-[11px] border-b flex items-center gap-3 ${
-        theme === 'dark' ? 'border-zinc-700/50 bg-zinc-900/50 text-zinc-500' : 'border-zinc-200 bg-zinc-100 text-zinc-500'
-      }`}>
+      <div className="shrink-0 px-3 py-1.5 text-[11px] border-b border-border bg-surface-2 text-ink-muted flex items-center gap-3">
         <span>{result.iterations} iteration{result.iterations !== 1 ? 's' : ''}</span>
         <span>•</span>
         <span>{result.executionTime.toFixed(1)}ms</span>
@@ -359,7 +346,7 @@ export function InferredTriplesPanel({
       {/* Content */}
       <div className="flex-1 overflow-auto p-2">
         {filteredTriples.length === 0 ? (
-          <div className={`text-center py-8 ${theme === 'dark' ? 'text-zinc-500' : 'text-zinc-400'}`}>
+          <div className="text-center py-8 text-ink-muted">
             {searchQuery ? 'No triples match your search' : 'No triples were inferred'}
           </div>
         ) : viewMode === 'flat' ? (

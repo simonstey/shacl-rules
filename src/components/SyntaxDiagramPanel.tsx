@@ -336,11 +336,11 @@ export function SyntaxDiagramPanel({
 
   const visibleCount = grammarRules.length - hiddenRules.size;
 
-  const bgColor = theme === 'dark' ? 'bg-zinc-900' : 'bg-white';
-  const borderColor = theme === 'dark' ? 'border-zinc-700' : 'border-zinc-200';
-  const textColor = theme === 'dark' ? 'text-zinc-300' : 'text-zinc-700';
-  const mutedColor = theme === 'dark' ? 'text-zinc-500' : 'text-zinc-400';
-  const hoverBg = theme === 'dark' ? 'hover:bg-zinc-800' : 'hover:bg-zinc-100';
+  const bgColor = 'bg-surface-2';
+  const borderColor = 'border-border-2';
+  const textColor = 'text-ink-2';
+  const mutedColor = 'text-ink-muted';
+  const hoverBg = 'hover:bg-surface-3';
 
   return (
     <div className={`h-full flex flex-col ${bgColor} ${textColor}`}>
@@ -434,14 +434,16 @@ export function SyntaxDiagramPanel({
                     </button>
                     <button
                       onClick={() => showAllInCategory(category)}
-                      className={`px-1.5 py-0.5 rounded ${hoverBg}`}
+                      aria-label={`Show all ${CATEGORY_LABELS[category]} rules`}
+                      className={`min-w-6 h-6 flex items-center justify-center rounded ${hoverBg}`}
                       title="Show all"
                     >
                       ✓
                     </button>
                     <button
                       onClick={() => hideAllInCategory(category)}
-                      className={`px-1.5 py-0.5 rounded ${hoverBg}`}
+                      aria-label={`Hide all ${CATEGORY_LABELS[category]} rules`}
+                      className={`min-w-6 h-6 flex items-center justify-center rounded ${hoverBg}`}
                       title="Hide all"
                     >
                       ✗

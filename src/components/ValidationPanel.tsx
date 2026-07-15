@@ -5,16 +5,16 @@ import { ValidationResult } from '@/lib/validation';
 interface ValidationPanelProps {
   result: ValidationResult | null;
   isValidating: boolean;
-  theme?: 'light' | 'dark';
 }
 
-export function ValidationPanel({ result, isValidating, theme = 'dark' }: ValidationPanelProps) {
-  const isDark = theme === 'dark';
-  const bgColor = isDark ? 'bg-zinc-900' : 'bg-white';
-  const borderColor = isDark ? 'border-zinc-700/50' : 'border-zinc-200';
-  const textColor = isDark ? 'text-zinc-300' : 'text-zinc-700';
-  const mutedColor = isDark ? 'text-zinc-500' : 'text-zinc-400';
-  const hoverBg = isDark ? 'hover:bg-zinc-800/50' : 'hover:bg-zinc-50';
+export function ValidationPanel({ result, isValidating }: ValidationPanelProps) {
+  const bgColor = 'bg-surface-2';
+  const borderColor = 'border-border';
+  const textColor = 'text-ink-2';
+  // Muted text still needs AA contrast (4.5:1): zinc-400 on zinc-900 ≈ 6.9:1,
+  // zinc-600 on white ≈ 7.5:1. zinc-500/zinc-400 previously failed.
+  const mutedColor = 'text-ink-muted';
+  const hoverBg = 'hover:bg-surface-3';
 
   if (isValidating) {
     return (
@@ -58,7 +58,7 @@ export function ValidationPanel({ result, isValidating, theme = 'dark' }: Valida
       {/* Header */}
       <div className={`px-3 py-2 border-b ${borderColor} flex items-center justify-between ${bgColor}`}>
         <div className="flex items-center gap-2">
-          <h3 className={`font-medium text-xs ${isDark ? 'text-zinc-200' : 'text-zinc-800'}`}>Validation</h3>
+          <h3 className="font-medium text-xs text-ink">Validation</h3>
           <div className="flex items-center gap-2 text-[10px]">
             {errors.length > 0 && (
               <span className="flex items-center gap-1 text-red-500">

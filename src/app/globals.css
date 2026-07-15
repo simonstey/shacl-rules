@@ -1,22 +1,63 @@
 @import "tailwindcss";
 
-:root {
+/*
+ * Theme is driven by a `light` / `dark` class on <html> (set from React state),
+ * NOT by prefers-color-scheme — the in-app toggle is the source of truth.
+ * OS preference only seeds the initial value (see Playground.tsx).
+ *
+ * Semantic surface/ink/border tokens are the single source of truth for chrome
+ * color. Components read them via Tailwind utilities (bg-surface, text-ink-muted,
+ * border-border, …) mapped in the @theme block below — no per-component
+ * `theme === 'dark' ? …` ternaries. Redefining the raw vars under .light/.dark
+ * makes one utility class resolve correctly in both themes.
+ */
+:root,
+.light {
   --background: #ffffff;
   --foreground: #171717;
+
+  --surface: #ffffff;      /* app root / editor canvas */
+  --surface-2: #fafafa;    /* panels, header, footer, sidebar */
+  --surface-3: #f4f4f5;    /* inputs, selected controls, hover fills */
+  --ink: #18181b;          /* primary text, headings */
+  --ink-2: #3f3f46;        /* secondary text, filled labels */
+  --ink-muted: #52525b;    /* tertiary text — AA floor on white (~7.5:1) */
+  --border: #e4e4e7;       /* hairline structure */
+  --border-2: #d4d4d8;     /* stronger hairline (input borders) */
+  --accent: #2563eb;       /* interaction / selection (blue-600 for AA on light) */
+}
+
+.dark {
+  --background: #0a0a0a;
+  --foreground: #ededed;
+
+  --surface: #09090b;
+  --surface-2: #18181b;
+  --surface-3: #27272a;
+  --ink: #f4f4f5;
+  --ink-2: #d4d4d8;
+  --ink-muted: #a1a1aa;    /* AA floor on zinc-900 (~6.9:1) */
+  --border: #27272a;
+  --border-2: #3f3f46;
+  --accent: #3b82f6;
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
+
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-surface-3: var(--surface-3);
+  --color-ink: var(--ink);
+  --color-ink-2: var(--ink-2);
+  --color-ink-muted: var(--ink-muted);
+  --color-border: var(--border);
+  --color-border-2: var(--border-2);
+  --color-accent: var(--accent);
+
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
 }
 
 body {
@@ -48,7 +89,7 @@ body {
   border-radius: 2px;
 }
 
-/* Rule highlight hover decoration for provenance linking */
+/* Rule highlight hover decoration for provenance linking (editor gutter) */
 .monaco-editor .rule-highlight-hover {
   background-color: rgba(59, 130, 246, 0.15) !important;
   border-left: 3px solid rgba(59, 130, 246, 0.8) !important;
@@ -71,7 +112,7 @@ body {
   border-left: 2px solid rgba(59, 130, 246, 0.5);
 }
 
-/* Custom scrollbar */
+/* Custom scrollbar (dark is the default) */
 ::-webkit-scrollbar {
   width: 8px;
   height: 8px;
@@ -90,13 +131,23 @@ body {
   background: #52525b;
 }
 
-/* Light mode scrollbar */
+/* Light-theme scrollbar (html.light is set from React state) */
 .light ::-webkit-scrollbar-thumb {
   background: #d4d4d8;
 }
 
 .light ::-webkit-scrollbar-thumb:hover {
   background: #a1a1aa;
+}
+
+/* Firefox scrollbar */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #3f3f46 transparent;
+}
+
+.light * {
+  scrollbar-color: #d4d4d8 transparent;
 }
 
 /* Panel resize handle animations */
@@ -115,27 +166,7 @@ body {
   background-color: rgba(59, 130, 246, 0.5) !important;
 }
 
-/* Smooth transitions for theme changes */
-.transition-theme {
-  transition: background-color 200ms ease, border-color 200ms ease, color 200ms ease;
-}
-
-/* Token highlight animations */
-@keyframes token-pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.7; }
-}
-
-.token-highlight-pulse {
-  animation: token-pulse 1.5s ease-in-out infinite;
-}
-
-/* Error squiggle animation */
-@keyframes squiggle {
-  0%, 100% { background-position: 0 100%; }
-  50% { background-position: 4px 100%; }
-}
-
+/* Error/warning squiggle decorations */
 .monaco-editor .squiggly-error {
   background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='6' height='3'%3E%3Cpath d='M0 3 L1.5 0 L3 3 L4.5 0 L6 3' stroke='%23ef4444' fill='none' stroke-width='1'/%3E%3C/svg%3E") repeat-x bottom left;
   padding-bottom: 3px;
@@ -146,64 +177,26 @@ body {
   padding-bottom: 3px;
 }
 
-/* Glow effects for valid state */
-@keyframes valid-glow {
-  0%, 100% { box-shadow: 0 0 5px rgba(34, 197, 94, 0.3); }
-  50% { box-shadow: 0 0 15px rgba(34, 197, 94, 0.5); }
-}
-
-.valid-glow {
-  animation: valid-glow 2s ease-in-out infinite;
-}
-
 /* Focus ring styles */
 button:focus-visible,
-a:focus-visible {
-  outline: 2px solid rgba(59, 130, 246, 0.5);
+a:focus-visible,
+[role="tab"]:focus-visible,
+input:focus-visible {
+  outline: 2px solid rgba(59, 130, 246, 0.6);
   outline-offset: 2px;
 }
 
-/* Code block styling for syntax breakdown */
-.syntax-token {
-  font-family: var(--font-geist-mono), monospace;
-  font-size: 0.75rem;
-  padding: 0.125rem 0.375rem;
-  border-radius: 0.25rem;
-  white-space: nowrap;
-}
-
-/* Animate panel collapse */
-.panel-collapse-enter {
-  opacity: 0;
-  transform: translateX(-10px);
-}
-
-.panel-collapse-enter-active {
-  opacity: 1;
-  transform: translateX(0);
-  transition: opacity 200ms ease, transform 200ms ease;
-}
-
-.panel-collapse-exit {
-  opacity: 1;
-  transform: translateX(0);
-}
-
-.panel-collapse-exit-active {
-  opacity: 0;
-  transform: translateX(-10px);
-  transition: opacity 200ms ease, transform 200ms ease;
-}
-
-/* Line clamp utility */
-.line-clamp-2 {
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-}
-
-/* Tabular numbers for line/column display */
-.tabular-nums {
-  font-variant-numeric: tabular-nums;
+/*
+ * Respect reduced-motion: neutralize spinners, infinite loops, and long
+ * transitions for users who ask for it (WCAG 2.3.3).
+ */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }

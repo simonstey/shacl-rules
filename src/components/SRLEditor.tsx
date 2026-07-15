@@ -1,9 +1,9 @@
 'use client';
 
 import { useEffect, useRef, useCallback } from 'react';
-import Editor, { OnMount, OnChange, Monaco } from '@monaco-editor/react';
+import Editor, { OnMount, OnChange, BeforeMount, Monaco } from '@monaco-editor/react';
 import type { editor } from 'monaco-editor';
-import { registerSRLLanguage, SRL_LANGUAGE_ID } from '@/lib/monaco';
+import { registerSRLLanguage, registerSRLThemes, SRL_LANGUAGE_ID } from '@/lib/monaco';
 import { ValidationMessage } from '@/lib/validation';
 import { getGrammarRuleForContext } from '@/lib/monaco/useSyntaxDiagrams';
 
@@ -30,11 +30,15 @@ export function SRLEditor({
   const monacoRef = useRef<Monaco | null>(null);
   const lastRuleRef = useRef<string | null>(null);
 
+  // Define themes before the editor mounts so the very first paint is correct.
+  const handleBeforeMount: BeforeMount = useCallback((monaco) => {
+    registerSRLThemes(monaco);
+  }, []);
+
   const handleEditorMount: OnMount = useCallback((editor, monaco) => {
     editorRef.current = editor;
     monacoRef.current = monaco;
     registerSRLLanguage(monaco);
-    editor.updateOptions({ theme: theme === 'dark' ? 'srl-dark' : 'srl-light' });
     onEditorReady?.(editor, monaco);
 
     if (onGrammarRuleChange) {
@@ -51,7 +55,7 @@ export function SRLEditor({
         }
       });
     }
-  }, [theme, onEditorReady, onGrammarRuleChange]);
+  }, [onEditorReady, onGrammarRuleChange]);
 
   const handleChange: OnChange = useCallback(
     (newValue) => {
@@ -86,12 +90,6 @@ export function SRLEditor({
     monaco.editor.setModelMarkers(model, 'srl-validation', markers);
   }, [validationMessages]);
 
-  useEffect(() => {
-    if (editorRef.current && monacoRef.current) {
-      editorRef.current.updateOptions({ theme: theme === 'dark' ? 'srl-dark' : 'srl-light' });
-    }
-  }, [theme]);
-
   return (
     <Editor
       height="100%"
@@ -99,7 +97,8 @@ export function SRLEditor({
       value={value}
       onChange={handleChange}
       onMount={handleEditorMount}
-      theme={theme === 'dark' ? 'vs-dark' : 'vs'}
+      beforeMount={handleBeforeMount}
+      theme={theme === 'dark' ? 'srl-dark' : 'srl-light'}
       options={{
         minimap: { enabled: false },
         fontSize: 14,

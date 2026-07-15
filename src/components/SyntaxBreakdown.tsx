@@ -1,8 +1,27 @@
 'use client';
 
-import { useMemo, useState, useCallback } from 'react';
+import { useMemo, useState, useCallback, useEffect, useRef } from 'react';
 import { parseSRL, ParseResult } from '@/lib/srl/parser';
 import { IToken } from 'chevrotain';
+
+/**
+ * Debounces a value so the expensive re-parse below runs at most once per
+ * `delay`ms, not on every keystroke. The validation pipeline already parses the
+ * same text on a 300ms debounce; this keeps the breakdown off the hot edit path.
+ */
+function useDebouncedValue<T>(value: T, delay: number): T {
+  const [debounced, setDebounced] = useState(value);
+  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    timeoutRef.current = setTimeout(() => setDebounced(value), delay);
+    return () => {
+      if (timeoutRef.current) clearTimeout(timeoutRef.current);
+    };
+  }, [value, delay]);
+
+  return debounced;
+}
 
 interface SyntaxBreakdownProps {
   code: string;
@@ -299,22 +318,24 @@ export function SyntaxBreakdown({
   const [viewMode, setViewMode] = useState<'tokens' | 'structure'>('structure');
   const [hoveredToken, setHoveredToken] = useState<TokenInfo | null>(null);
 
+  const debouncedCode = useDebouncedValue(code, 300);
+
   const parseResult = useMemo((): ParseResult & { tokenInfos: TokenInfo[]; structure: ParsedStructure } => {
     try {
-      const result = parseSRL(code);
+      const result = parseSRL(debouncedCode);
       const tokenInfos = result.tokens.map(tokenToInfo);
       const structure = analyzeStructure(result.tokens);
       return { ...result, tokenInfos, structure };
     } catch {
-      return { 
-        cst: null, 
-        errors: [], 
-        tokens: [], 
+      return {
+        cst: null,
+        errors: [],
+        tokens: [],
         tokenInfos: [],
         structure: { prefixes: [], rules: [], dataBlocks: [], declarations: [] }
       };
     }
-  }, [code]);
+  }, [debouncedCode]);
 
   const filteredTokens = useMemo(() => {
     if (selectedCategory === 'all') return parseResult.tokenInfos;
@@ -353,10 +374,10 @@ export function SyntaxBreakdown({
     });
   }, [onTokenClick]);
 
-  const bgColor = theme === 'dark' ? 'bg-zinc-900' : 'bg-white';
-  const textColor = theme === 'dark' ? 'text-zinc-300' : 'text-zinc-700';
-  const mutedColor = theme === 'dark' ? 'text-zinc-500' : 'text-zinc-400';
-  const borderColor = theme === 'dark' ? 'border-zinc-700/50' : 'border-zinc-200';
+  const bgColor = 'bg-surface-2';
+  const textColor = 'text-ink-2';
+  const mutedColor = 'text-ink-muted';
+  const borderColor = 'border-border';
 
   return (
     <div className={`h-full flex flex-col ${bgColor} ${textColor} text-sm`}>
@@ -369,7 +390,7 @@ export function SyntaxBreakdown({
             className={`px-3 py-1 text-xs font-medium transition-colors ${
               viewMode === 'structure'
                 ? theme === 'dark' ? 'bg-blue-600 text-white' : 'bg-blue-500 text-white'
-                : theme === 'dark' ? 'bg-zinc-800 hover:bg-zinc-700' : 'bg-zinc-100 hover:bg-zinc-200'
+                : 'bg-surface-2 hover:bg-surface-3'
             }`}
           >
             Structure
@@ -379,7 +400,7 @@ export function SyntaxBreakdown({
             className={`px-3 py-1 text-xs font-medium transition-colors ${
               viewMode === 'tokens'
                 ? theme === 'dark' ? 'bg-blue-600 text-white' : 'bg-blue-500 text-white'
-                : theme === 'dark' ? 'bg-zinc-800 hover:bg-zinc-700' : 'bg-zinc-100 hover:bg-zinc-200'
+                : 'bg-surface-2 hover:bg-surface-3'
             }`}
           >
             Tokens
@@ -396,10 +417,10 @@ export function SyntaxBreakdown({
                 className={`
                   px-2 py-1 text-xs rounded-full transition-colors
                   ${selectedCategory === cat
-                    ? cat === 'all' 
-                      ? theme === 'dark' ? 'bg-zinc-600 text-white' : 'bg-zinc-700 text-white'
+                    ? cat === 'all'
+                      ? 'bg-accent text-white'
                       : CATEGORY_COLORS[cat as TokenInfo['category']].bg + ' ' + CATEGORY_COLORS[cat as TokenInfo['category']][theme]
-                    : theme === 'dark' ? 'text-zinc-500 hover:text-zinc-300' : 'text-zinc-400 hover:text-zinc-600'
+                    : 'text-ink-muted hover:text-ink-2'
                   }
                 `}
               >
@@ -431,7 +452,7 @@ export function SyntaxBreakdown({
                       key={i}
                       className={`
                         flex items-center gap-2 px-2 py-1.5 rounded text-xs cursor-pointer
-                        ${theme === 'dark' ? 'hover:bg-zinc-800' : 'hover:bg-zinc-100'}
+                        ${'hover:bg-surface-3'}
                       `}
                       onClick={() => onTokenClick?.({ startLine: p.line, startColumn: 1, endLine: p.line, endColumn: 100 })}
                     >
@@ -457,7 +478,7 @@ export function SyntaxBreakdown({
                       key={i}
                       className={`
                         px-2 py-1.5 rounded text-xs cursor-pointer
-                        ${theme === 'dark' ? 'hover:bg-zinc-800' : 'hover:bg-zinc-100'}
+                        ${'hover:bg-surface-3'}
                       `}
                       onClick={() => onTokenClick?.({ startLine: r.line, startColumn: 1, endLine: r.line, endColumn: 100 })}
                     >
@@ -495,7 +516,7 @@ export function SyntaxBreakdown({
                       key={i}
                       className={`
                         flex items-center gap-2 px-2 py-1.5 rounded text-xs cursor-pointer
-                        ${theme === 'dark' ? 'hover:bg-zinc-800' : 'hover:bg-zinc-100'}
+                        ${'hover:bg-surface-3'}
                       `}
                       onClick={() => onTokenClick?.({ startLine: d.line, startColumn: 1, endLine: d.line, endColumn: 100 })}
                     >
@@ -520,7 +541,7 @@ export function SyntaxBreakdown({
                       key={i}
                       className={`
                         flex items-center gap-2 px-2 py-1.5 rounded text-xs cursor-pointer
-                        ${theme === 'dark' ? 'hover:bg-zinc-800' : 'hover:bg-zinc-100'}
+                        ${'hover:bg-surface-3'}
                       `}
                       onClick={() => onTokenClick?.({ startLine: d.line, startColumn: 1, endLine: d.line, endColumn: 100 })}
                     >
@@ -577,9 +598,9 @@ export function SyntaxBreakdown({
                   key={index}
                   className={`
                     flex items-center gap-2 px-2 py-1 rounded cursor-pointer transition-colors
-                    ${isHovered 
+                    ${isHovered
                       ? theme === 'dark' ? 'bg-blue-500/20' : 'bg-blue-100'
-                      : theme === 'dark' ? 'hover:bg-zinc-800' : 'hover:bg-zinc-100'
+                      : 'hover:bg-surface-3'
                     }
                   `}
                   onMouseEnter={() => handleTokenMouseEnter(token)}
@@ -617,7 +638,7 @@ export function SyntaxBreakdown({
 
       {/* Hover info panel */}
       {hoveredToken && viewMode === 'tokens' && (
-        <div className={`border-t ${borderColor} px-3 py-2 ${theme === 'dark' ? 'bg-zinc-800/50' : 'bg-zinc-50'}`}>
+        <div className={`border-t ${borderColor} px-3 py-2 bg-surface-3`}>
           <div className="flex items-start gap-3">
             <div className="flex-1">
               <div className={`text-xs font-medium ${CATEGORY_COLORS[hoveredToken.category][theme]}`}>

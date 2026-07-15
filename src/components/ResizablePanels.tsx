@@ -10,74 +10,46 @@ interface ResizablePanelsProps {
   leftTitle?: string;
   rightTitle?: string;
   bottomTitle?: string;
-  theme?: 'light' | 'dark';
   defaultLeftSize?: number;
   defaultBottomSize?: number;
   showBottom?: boolean;
+  /** When true, the two editors stack vertically instead of sitting side by side. */
+  stacked?: boolean;
 }
 
-function ResizeHandle({ 
+function ResizeHandle({
   direction = 'horizontal',
-  theme = 'dark' 
-}: { 
+}: {
   direction?: 'horizontal' | 'vertical';
-  theme?: 'light' | 'dark';
 }) {
   const isHorizontal = direction === 'horizontal';
-  
+
   return (
     <PanelResizeHandle
-      className={`
-        group relative flex items-center justify-center
-        ${isHorizontal ? 'w-2 cursor-col-resize' : 'h-2 cursor-row-resize'}
-        ${theme === 'dark' ? 'bg-zinc-800/50' : 'bg-zinc-200/50'}
-        hover:bg-blue-500/30 active:bg-blue-500/50
-        transition-colors duration-150
-      `}
+      className={`group relative flex items-center justify-center ${isHorizontal ? 'w-2 cursor-col-resize' : 'h-2 cursor-row-resize'} bg-surface-3 hover:bg-blue-500/30 active:bg-blue-500/50 transition-colors duration-150`}
     >
       {/* Resize indicator dots */}
-      <div className={`
-        flex gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity
-        ${isHorizontal ? 'flex-col' : 'flex-row'}
-      `}>
+      <div className={`flex gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity ${isHorizontal ? 'flex-col' : 'flex-row'}`}>
         {[0, 1, 2].map((i) => (
-          <div
-            key={i}
-            className={`
-              w-1 h-1 rounded-full
-              ${theme === 'dark' ? 'bg-zinc-400' : 'bg-zinc-500'}
-            `}
-          />
+          <div key={i} className="w-1 h-1 rounded-full bg-ink-muted" />
         ))}
       </div>
-      
+
       {/* Hover line indicator */}
-      <div className={`
-        absolute opacity-0 group-hover:opacity-100 group-active:opacity-100
-        transition-opacity bg-blue-500
-        ${isHorizontal ? 'w-0.5 h-8' : 'h-0.5 w-8'}
-      `} />
+      <div className={`absolute opacity-0 group-hover:opacity-100 group-active:opacity-100 transition-opacity bg-blue-500 ${isHorizontal ? 'w-0.5 h-8' : 'h-0.5 w-8'}`} />
     </PanelResizeHandle>
   );
 }
 
 interface PanelHeaderProps {
   title: string;
-  theme?: 'light' | 'dark';
   icon?: ReactNode;
   actions?: ReactNode;
 }
 
-function PanelHeader({ title, theme = 'dark', icon, actions }: PanelHeaderProps) {
+function PanelHeader({ title, icon, actions }: PanelHeaderProps) {
   return (
-    <div className={`
-      h-9 px-3 flex items-center justify-between gap-2 shrink-0
-      border-b select-none
-      ${theme === 'dark' 
-        ? 'bg-zinc-900 border-zinc-700/50 text-zinc-300' 
-        : 'bg-zinc-100 border-zinc-200 text-zinc-700'
-      }
-    `}>
+    <div className="h-9 px-3 flex items-center justify-between gap-2 shrink-0 border-b select-none bg-surface-2 border-border text-ink-2">
       <div className="flex items-center gap-2 text-xs font-medium uppercase tracking-wide">
         {icon}
         <span>{title}</span>
@@ -98,25 +70,27 @@ export function ResizablePanels({
   leftTitle = 'Data Graph',
   rightTitle = 'Rules',
   bottomTitle = 'Syntax Analysis',
-  theme = 'dark',
   defaultLeftSize = 40,
   defaultBottomSize = 30,
   showBottom = true,
+  stacked = false,
 }: ResizablePanelsProps) {
-  const panelBg = theme === 'dark' ? 'bg-zinc-900' : 'bg-white';
-  const borderColor = theme === 'dark' ? 'border-zinc-800' : 'border-zinc-200';
+  // When stacked, the two editors run top→bottom, so the data panel gets a
+  // bottom border and the resize handle between them flips to vertical.
+  const editorGroupDir = stacked ? 'vertical' : 'horizontal';
+  const editorHandleDir = stacked ? 'vertical' : 'horizontal';
+  const dataPanelBorder = stacked ? 'border-b' : 'border-r';
 
   return (
     <PanelGroup direction="vertical" className="h-full">
-      {/* Top section with left/right panels */}
+      {/* Top section with the two editors */}
       <Panel defaultSize={showBottom ? (100 - defaultBottomSize) : 100} minSize={30}>
-        <PanelGroup direction="horizontal" className="h-full">
-          {/* Left Panel - Data Graph */}
+        <PanelGroup key={editorGroupDir} direction={editorGroupDir} className="h-full">
+          {/* Data Graph */}
           <Panel defaultSize={defaultLeftSize} minSize={20} maxSize={80}>
-            <div className={`h-full flex flex-col ${panelBg} ${borderColor} border-r`}>
-              <PanelHeader 
-                title={leftTitle} 
-                theme={theme}
+            <div className={`h-full flex flex-col bg-surface-2 border-border ${dataPanelBorder}`}>
+              <PanelHeader
+                title={leftTitle}
                 icon={
                   <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                     <circle cx="12" cy="5" r="3" />
@@ -133,14 +107,13 @@ export function ResizablePanels({
             </div>
           </Panel>
 
-          <ResizeHandle direction="horizontal" theme={theme} />
+          <ResizeHandle direction={editorHandleDir} />
 
-          {/* Right Panel - Rules */}
+          {/* Rules */}
           <Panel defaultSize={100 - defaultLeftSize} minSize={20} maxSize={80}>
-            <div className={`h-full flex flex-col ${panelBg}`}>
-              <PanelHeader 
-                title={rightTitle} 
-                theme={theme}
+            <div className="h-full flex flex-col bg-surface-2">
+              <PanelHeader
+                title={rightTitle}
                 icon={
                   <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                     <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" />
@@ -162,12 +135,11 @@ export function ResizablePanels({
       {/* Bottom Panel - Syntax Analysis */}
       {showBottom && bottomPanel && (
         <>
-          <ResizeHandle direction="vertical" theme={theme} />
+          <ResizeHandle direction="vertical" />
           <Panel defaultSize={defaultBottomSize} minSize={15} maxSize={60}>
-            <div className={`h-full flex flex-col ${panelBg} ${borderColor} border-t`}>
-              <PanelHeader 
-                title={bottomTitle} 
-                theme={theme}
+            <div className="h-full flex flex-col bg-surface-2 border-border border-t">
+              <PanelHeader
+                title={bottomTitle}
                 icon={
                   <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                     <polyline points="4 17 10 11 4 5" />

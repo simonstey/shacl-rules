@@ -1,0 +1,105 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-07-15T00:00:00Z",
+  "title": "Design System: SHACL Rules Playground",
+  "extensions": {
+    "colorMeta": {
+      "accent": { "role": "primary", "displayName": "Signal Blue", "canonical": "#3b82f6", "tonalRamp": ["#172554", "#1e3a8a", "#1d4ed8", "#2563eb", "#3b82f6", "#60a5fa", "#93c5fd", "#dbeafe"] },
+      "positive": { "role": "secondary", "displayName": "Run Green", "canonical": "#16a34a", "tonalRamp": ["#052e16", "#14532d", "#166534", "#15803d", "#16a34a", "#22c55e", "#4ade80", "#dcfce7"] },
+      "diagram": { "role": "secondary", "displayName": "Diagram Purple", "canonical": "#a855f7", "tonalRamp": ["#3b0764", "#581c87", "#6b21a8", "#7e22ce", "#a855f7", "#c084fc", "#d8b4fe", "#f3e8ff"] },
+      "ink": { "role": "neutral", "displayName": "Ink", "canonical": "#18181b", "tonalRamp": ["#09090b", "#18181b", "#27272a", "#3f3f46", "#52525b", "#a1a1aa", "#d4d4d8", "#f4f4f5"] },
+      "ink-muted": { "role": "neutral", "displayName": "Muted Ink", "canonical": "#52525b", "tonalRamp": ["#18181b", "#27272a", "#3f3f46", "#52525b", "#71717a", "#a1a1aa", "#d4d4d8", "#fafafa"] },
+      "surface": { "role": "neutral", "displayName": "Canvas", "canonical": "#ffffff", "tonalRamp": ["#09090b", "#18181b", "#27272a", "#3f3f46", "#71717a", "#d4d4d8", "#f4f4f5", "#ffffff"] }
+    },
+    "typographyMeta": {
+      "title": { "displayName": "Title", "purpose": "App title and panel section headings." },
+      "label": { "displayName": "Label", "purpose": "Panel-header chrome, tab labels, category badges (uppercase +0.05em)." },
+      "body": { "displayName": "Body", "purpose": "Descriptions, validation messages, example summaries." },
+      "code": { "displayName": "Code", "purpose": "All RDF/SRL terms, inferred triples, tokens — Geist Mono." }
+    },
+    "shadows": [
+      { "name": "none", "value": "none", "purpose": "Flat by default. Structure is borders + surface tiers, never box-shadow." }
+    ],
+    "motion": [
+      { "name": "state", "value": "150ms ease", "purpose": "Hover/active/tab transitions. Product tempo; no choreography." },
+      { "name": "reduced", "value": "0.01ms", "purpose": "prefers-reduced-motion collapses all transitions and infinite loops." }
+    ],
+    "breakpoints": [
+      { "name": "stack", "value": "900px", "purpose": "Below this, sidebar auto-collapses and editor panels stack vertically." }
+    ]
+  },
+  "components": [
+    {
+      "name": "Run Rules Button",
+      "kind": "button",
+      "refersTo": "button-run",
+      "description": "Primary action; executes SRL rules against the RDF graph. Disabled until validation passes.",
+      "html": "<button class=\"ds-btn-run\"><svg viewBox=\"0 0 24 24\" width=\"16\" height=\"16\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\"><polygon points=\"5 3 19 12 5 21 5 3\"/></svg>Run Rules</button>",
+      "css": ".ds-btn-run { display:inline-flex; align-items:center; gap:6px; background:#16a34a; color:#fff; padding:6px 12px; border:none; border-radius:12px; font-size:14px; font-weight:500; cursor:pointer; transition:background 150ms ease; } .ds-btn-run:hover { background:#22c55e; } .ds-btn-run:focus-visible { outline:2px solid rgba(59,130,246,.6); outline-offset:2px; } .ds-btn-run:disabled { background:#27272a; color:#52525b; cursor:not-allowed; }"
+    },
+    {
+      "name": "Icon Toggle",
+      "kind": "button",
+      "refersTo": "button-icon",
+      "description": "Toolbar toggle (theme, syntax panel, diagrams). Accent-tinted when pressed.",
+      "html": "<button class=\"ds-btn-icon\" aria-pressed=\"true\" aria-label=\"Show syntax analysis\"><svg viewBox=\"0 0 24 24\" width=\"16\" height=\"16\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><polyline points=\"4 17 10 11 4 5\"/><line x1=\"12\" y1=\"19\" x2=\"20\" y2=\"19\"/></svg></button>",
+      "css": ".ds-btn-icon { background:transparent; color:#a1a1aa; padding:8px; border:none; border-radius:12px; cursor:pointer; transition:background 150ms ease, color 150ms ease; } .ds-btn-icon:hover { background:#27272a; color:#f4f4f5; } .ds-btn-icon[aria-pressed=\"true\"] { background:rgba(59,130,246,.2); color:#60a5fa; } .ds-btn-icon:focus-visible { outline:2px solid rgba(59,130,246,.6); outline-offset:2px; }"
+    },
+    {
+      "name": "Search Input",
+      "kind": "input",
+      "refersTo": "input-search",
+      "description": "Filter box for examples and inferred triples.",
+      "html": "<input class=\"ds-input-search\" type=\"text\" placeholder=\"Filter triples...\" aria-label=\"Filter triples\" />",
+      "css": ".ds-input-search { width:100%; background:#27272a; color:#f4f4f5; border:1px solid #3f3f46; border-radius:8px; padding:8px 12px; font-size:13px; } .ds-input-search::placeholder { color:#a1a1aa; } .ds-input-search:focus { outline:none; border-color:transparent; box-shadow:0 0 0 2px #3b82f6; }"
+    },
+    {
+      "name": "Results Tab",
+      "kind": "nav",
+      "refersTo": "tab",
+      "description": "Validation / Inferred tab in the right panel.",
+      "html": "<div role=\"tablist\" class=\"ds-tabs\"><button role=\"tab\" aria-selected=\"true\" class=\"ds-tab ds-tab-active\">Inferred</button><button role=\"tab\" aria-selected=\"false\" class=\"ds-tab\">Validation</button></div>",
+      "css": ".ds-tabs { display:flex; border-bottom:1px solid #27272a; } .ds-tab { flex:1; background:transparent; border:none; padding:8px 12px; font-size:12px; font-weight:500; color:#a1a1aa; cursor:pointer; position:relative; } .ds-tab:hover { color:#f4f4f5; } .ds-tab-active { color:#f4f4f5; } .ds-tab-active::after { content:''; position:absolute; left:0; right:0; bottom:0; height:2px; background:#16a34a; }"
+    },
+    {
+      "name": "Provenance Badge",
+      "kind": "chip",
+      "refersTo": "provenance-badge",
+      "description": "Binds an inferred triple to the rule that produced it, via a stable per-rule hue. The signature component.",
+      "html": "<span class=\"ds-badge-prov\">R1</span>",
+      "css": ".ds-badge-prov { display:inline-block; font-size:10px; font-weight:500; padding:2px 6px; border-radius:4px; background:rgba(59,130,246,.2); color:#60a5fa; border:1px solid rgba(59,130,246,.3); }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Reference Bench",
+    "overview": "A workbench for people who work in triples — a precise instrument for authoring SHACL 1.2 Rules, running them over real RDF, and inspecting exactly what was inferred and why. Trust comes from legibility, honest state, and the absence of decoration that doesn't carry information. Structure comes from a two-tier neutral surface system and hairline borders, not elevation. Color is rationed hard: one blue accent, green for run/valid, purple for diagram mode, and an 8-hue ramp used only to bind an inferred triple to its rule. Color is a data channel, not a mood.",
+    "keyCharacteristics": [
+      "Two-tier neutral surfaces + hairline borders instead of cards and shadows",
+      "Rationed accent color; provenance is the only place a full palette appears",
+      "Monospace for all RDF/SRL content, sans for chrome; never mixed",
+      "Light and dark are equal first-class themes, driven by a class on <html>",
+      "Every state legible: default / hover / focus / active / disabled / loading / error / empty"
+    ],
+    "rules": [
+      { "name": "The Color-Is-Data Rule", "body": "Outside the blue accent, the two mode colors, and status, full-spectrum color appears in exactly one place: the provenance ramp.", "section": "colors" },
+      { "name": "The Muted-Floor Rule", "body": "Muted text never goes below #52525b (light) / #a1a1aa (dark). Lighter gray for text a user must read is prohibited.", "section": "colors" },
+      { "name": "The Two-Font Rule", "body": "Sans for chrome, mono for content. If a value could be copy-pasted into a .ttl file, it is mono.", "section": "typography" },
+      { "name": "The No-Shadow Rule", "body": "Structure is borders and surface tiers, never box-shadow.", "section": "elevation" }
+    ],
+    "dos": [
+      "Do drive theme from a light/dark class on <html>; read colors from CSS-variable tokens so both themes share one source of truth.",
+      "Do keep muted text at or above the muted floor and verify 4.5:1.",
+      "Do reserve the 8-hue ramp for provenance only, stable per rule index.",
+      "Do use mono for every RDF/SRL term and sans for every piece of chrome.",
+      "Do give every interactive element all states including a visible focus ring, and honor prefers-reduced-motion."
+    ],
+    "donts": [
+      "Don't use border-left/right > 1px as a colored accent stripe; selection is a background tint.",
+      "Don't introduce gradient text, glassmorphism, hero metrics, or identical card grids.",
+      "Don't drift toward a cluttered enterprise-IDE toolbar or gray-on-gray dialog soup.",
+      "Don't add cartoon color or oversized rounded bubbles.",
+      "Don't add box-shadow for structure; use borders and surface tiers.",
+      "Don't put a display font or any sans on an RDF term."
+    ]
+  }
+}

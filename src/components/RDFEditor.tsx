@@ -1,8 +1,9 @@
 'use client';
 
 import { useCallback } from 'react';
-import Editor, { OnMount, OnChange } from '@monaco-editor/react';
+import Editor, { OnMount, OnChange, BeforeMount } from '@monaco-editor/react';
 import type * as Monaco from 'monaco-editor';
+import { registerSRLThemes } from '@/lib/monaco';
 
 interface RDFEditorProps {
   value: string;
@@ -19,6 +20,12 @@ export function RDFEditor({
   readOnly = false,
   language = 'turtle',
 }: RDFEditorProps) {
+  // Share the same custom themes as the SRL editor. Monaco's active theme is
+  // global, so both editors must reference identical theme names or they fight.
+  const handleBeforeMount: BeforeMount = useCallback((monaco) => {
+    registerSRLThemes(monaco);
+  }, []);
+
   const handleEditorMount: OnMount = useCallback((editor, monaco) => {
     // Register Turtle language if not available
     if (!monaco.languages.getLanguages().some((lang: { id: string }) => lang.id === 'turtle')) {
@@ -109,7 +116,8 @@ export function RDFEditor({
       value={value}
       onChange={handleChange}
       onMount={handleEditorMount}
-      theme={theme === 'dark' ? 'vs-dark' : 'vs'}
+      beforeMount={handleBeforeMount}
+      theme={theme === 'dark' ? 'srl-dark' : 'srl-light'}
       options={{
         minimap: { enabled: false },
         fontSize: 14,
