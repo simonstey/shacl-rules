@@ -1,0 +1,35 @@
+{
+  "name": "srl-engine",
+  "version": "0.1.0",
+  "description": "SHACL 1.2 Rules (SRL) parser, validator, and inference engine",
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    }
+  },
+  "files": ["dist", "README.md"],
+  "sideEffects": false,
+  "scripts": {
+    "build": "tsup",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "chevrotain": "^11.0.3",
+    "n3": "^1.26.0"
+  },
+  "devDependencies": {
+    "@types/n3": "^1.26.1",
+    "tsup": "^8.3.5",
+    "typescript": "^5",
+    "vitest": "^2.1.8"
+  }
+}
