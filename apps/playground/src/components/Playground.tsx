@@ -13,7 +13,7 @@ import { ExamplesSidebar, ValidationPanel, FileUpload, InferredTriplesPanel } fr
 import { ResizablePanels, ResizeHandle } from './ResizablePanels';
 import { SyntaxBreakdown } from './SyntaxBreakdown';
 import { SyntaxDiagramPanel } from './SyntaxDiagramPanel';
-import { RuleInfo, InferredTriple } from '@/lib/rules/executor';
+import { type RuleInfo, type InferredTriple } from 'srl-engine';
 
 type RightPanelTab = 'validation' | 'inferred';
 

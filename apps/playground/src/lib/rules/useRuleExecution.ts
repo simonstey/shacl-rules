@@ -1,8 +1,7 @@
 'use client';
 
 import { useState, useCallback, useRef } from 'react';
-import { buildAST, RuleSet } from '../srl/ast';
-import { executeRules, ExecutionResult } from '../rules/executor';
+import { buildAST, executeRules, type RuleSet, type ExecutionResult } from 'srl-engine';
 
 export interface UseRuleExecutionResult {
   result: ExecutionResult | null;

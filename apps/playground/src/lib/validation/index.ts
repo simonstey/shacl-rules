@@ -1,2 +1,2 @@
-export * from './validator';
-export * from './useValidation';
+export type { ValidationMessage, ValidationResult } from 'srl-engine';
+export { useValidation } from './useValidation';

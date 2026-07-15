@@ -1,7 +1,7 @@
 'use client';
 
 import { useMemo, useState, useCallback, useEffect, useRef } from 'react';
-import { parseSRL, ParseResult } from '@/lib/srl/parser';
+import { parseSRL, type ParseResult } from 'srl-engine';
 import { IToken } from 'chevrotain';
 
 /**

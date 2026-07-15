@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useMemo, useCallback } from 'react';
-import { InferredTriple, RuleInfo, ExecutionResult, formatTripleForDisplay } from '@/lib/rules/executor';
+import { formatTripleForDisplay, type InferredTriple, type RuleInfo, type ExecutionResult } from 'srl-engine';
 
 interface InferredTriplesPanelProps {
   result: ExecutionResult | null;

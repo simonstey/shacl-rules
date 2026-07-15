@@ -1,5 +1,5 @@
 import { useCallback, useRef, useState, useEffect } from 'react';
-import { validateSRL, ValidationResult } from './validator';
+import { validateSRL, type ValidationResult } from 'srl-engine';
 
 const DEBOUNCE_DELAY = 300;
 

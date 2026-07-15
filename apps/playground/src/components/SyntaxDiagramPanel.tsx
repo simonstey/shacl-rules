@@ -2,7 +2,7 @@
 
 import { useMemo, useState, useCallback, useEffect } from 'react';
 import { createSyntaxDiagramsCode, ISerializedGast } from 'chevrotain';
-import { getSerializedGrammar, getGrammarRuleNames, GrammarRuleInfo } from '@/lib/srl/parser';
+import { getSerializedGrammar, getGrammarRuleNames, type GrammarRuleInfo } from 'srl-engine';
 import { useSyntaxDiagrams } from '@/lib/monaco/useSyntaxDiagrams';
 
 interface SyntaxDiagramPanelProps {
