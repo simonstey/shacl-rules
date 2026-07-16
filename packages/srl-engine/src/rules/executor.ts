@@ -468,6 +468,12 @@ export function executeRules(
     }
   }
 
+  // Include targeted-rule provenance entries in the returned rule list so
+  // consumers grouping inferred triples by rule can resolve targeted rules too.
+  for (const info of targetedRuleInfos.values()) {
+    ruleInfos.push(info);
+  }
+
   const executionTime = performance.now() - startTime;
 
   // Clear the module-level execution state.

@@ -86,6 +86,8 @@ describe('executeRules with targeted rules (py-srl oracle)', () => {
     const inferred = result.inferredTriples.map(t => t.quadString);
     expect(inferred).toContain('<http://example.org/Alice> <http://example.org/status> <http://example.org/adult>');
     expect(inferred).not.toContain('<http://example.org/Bob> <http://example.org/status> <http://example.org/adult>');
+    // Verify targeted rule info is included in ruleInfos for result grouping
+    expect(result.ruleInfos.some(ri => ri.name.includes('AdultShape') || ri.originalRule.name === 'http://example.org/r')).toBe(true);
   });
 
   it('errors (not throws) when a targeted rule set has no shapes graph', () => {
