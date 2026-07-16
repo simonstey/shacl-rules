@@ -3,7 +3,7 @@
 // setCurrentStore/Now, ASTBuilder, SRLParser) are intentionally not exported.
 
 // ── Language front end ──────────────────────────────────────────────
-export { buildAST } from './srl/ast';
+export { buildAST, ExtensionError } from './srl/ast';
 export {
   parseSRL,
   getSerializedGrammar,
@@ -27,6 +27,7 @@ export type {
   RuleHead,
   RuleBody,
   Rule,
+  TargetedRule,
   TransitiveDeclaration,
   SymmetricDeclaration,
   InverseDeclaration,
