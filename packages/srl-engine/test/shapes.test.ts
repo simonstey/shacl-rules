@@ -234,10 +234,11 @@ describe('checkConstraint: list family + language', () => {
 
   it('sh:languageIn', () => {
     const shapes = SH_PFX + `ex:S a sh:NodeShape ; sh:property [ sh:path ex:label ; sh:languageIn ( "en" "de" ) ] .`;
-    const data = `@prefix ex: <http://example.org/> .\nex:A ex:label "hi"@en . ex:B ex:label "salut"@fr .`;
+    const data = `@prefix ex: <http://example.org/> .\nex:A ex:label "hi"@en . ex:B ex:label "salut"@fr . ex:C ex:label "howdy"@en-US .`;
     const { shape, dataStore, shapesStore } = dataAndShape(shapes, data, 'http://example.org/S');
     expect(conforms(namedNode('http://example.org/A'), shape, dataStore, shapesStore)).toBe(true);
     expect(conforms(namedNode('http://example.org/B'), shape, dataStore, shapesStore)).toBe(false);
+    expect(conforms(namedNode('http://example.org/C'), shape, dataStore, shapesStore)).toBe(true); // en-US matches "en" prefix
   });
 });
 
