@@ -95,7 +95,7 @@ See [`src/index.ts`](src/index.ts) for the complete surface.
 
 - **[How-To Guide](docs/GUIDE.md)** — the full pipeline (validate → build →
   execute), semantics, an SRL cheat-sheet, recipes, and gotchas.
-- **[Examples](examples/)** — six runnable scripts (`node examples/01-….mjs`),
+- **[Examples](examples/)** — seven runnable scripts (`node examples/01-….mjs`),
   from basic inference to provenance.
 - **[Publishing](PUBLISHING.md)** — step-by-step npm release procedure.
 - **[Backlog](../../docs/BACKLOG.md)** — known bugs, deferred features, and

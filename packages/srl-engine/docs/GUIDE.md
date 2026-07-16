@@ -504,8 +504,10 @@ executeRules(ruleSet, data, {
 });
 ```
 
-`validateSRL` also accepts `{ extensions: true }` — it validates the wrapped
-rule with the focus variable already in the bound-variable set (`V₀ = { ?v }`).
+`validateSRL` also accepts `{ extensions: true, shapesGraph?, shapesStore? }` —
+it validates the wrapped rule with the focus variable already in the
+bound-variable set (`V₀ = { ?v }`). The shapes-graph options mirror
+`executeRules` (though well-formedness validation itself is AST-based).
 
 ### Worked example: adult status
 

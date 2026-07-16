@@ -135,12 +135,11 @@ instead seeds `SEQ0 = { {v ↦ n} : n ∈ F(shape) }` where `F(shape)` is the sh
 SET, head instantiation) is the standard machinery on the wrapped rule. The one
 new premise reduces to a virtual body element `TARGET(v, s)`.
 
-**Why deferred:** srl-engine currently has **no SHACL shapes machinery at all**
-— no shapes-graph input, no target selection, no conformance. Grepping the
-engine source for `targetClass`/`focusVar`/`conforms`/`NodeShape` returns
-nothing. This is a new subsystem plus a full-stack syntax addition, not a
-localized change. It also decides an open API question (how the shapes graph is
-supplied to `executeRules`/`validateSRL`).
+**Why it was deferred (now implemented in X1–X6):** srl-engine had **no SHACL
+shapes machinery** when this was written — no shapes-graph input, no target
+selection, no conformance. This was a new subsystem plus a full-stack syntax
+addition, not a localized change. It also required deciding how the shapes
+graph would be supplied to `executeRules`/`validateSRL`.
 
 **Architectural note (port ≠ copy):** py-srl splices `grammar-ext.lark` over an
 untouched base grammar (Lark). srl-engine's parser is **Chevrotain**

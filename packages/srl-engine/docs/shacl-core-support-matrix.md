@@ -96,9 +96,9 @@ asserts every entry in those sets appears in this document.
 | `sh:reificationRequired` | property | best-effort (see limitation below) |
 
 **Best-effort:** `sh:reifierShape` and `sh:reificationRequired` are evaluated via
-rdflib reifier triples when available. Under the pinned rdflib (7.6.0) triple
-terms materialize as plain tuples, so these are treated as vacuously satisfied
-rather than raising. This is a dependency limitation, not a gate.
+reifier triples when available. n3 lacks first-class triple terms, so these are
+treated as vacuously satisfied rather than raising. This is a dependency
+limitation, not a gate.
 
 ## Not supported yet
 
