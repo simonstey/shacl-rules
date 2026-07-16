@@ -79,6 +79,27 @@ export interface Rule {
   location?: SourceLocation;
 }
 
+/**
+ * A rule tied to a SHACL shape by a `FOR ?v IN <shape>` clause (opt-in extension).
+ * Wraps a Rule — all existing rule machinery runs on `.rule`.
+ */
+export interface TargetedRule {
+  type: 'targetedRule';
+  rule: Rule;
+  focusVar: string;
+  shape: string;
+  direction: 'rule-to-shape';
+  location?: SourceLocation;
+}
+
+/** Thrown when an opt-in extension construct is used with extensions disabled. */
+export class ExtensionError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'ExtensionError';
+  }
+}
+
 export interface TransitiveDeclaration {
   type: 'transitive';
   property: string;
@@ -119,6 +140,7 @@ export interface RuleSet {
   base?: string;
   prefixes: Map<string, string>;
   rules: Rule[];
+  targetedRules: TargetedRule[];
   declarations: Declaration[];
   dataBlocks: DataBlock[];
 }
@@ -234,14 +256,16 @@ function getLocationFromNode(node: CstNode): SourceLocation | undefined {
 export class ASTBuilder {
   private prefixes: Map<string, string> = new Map();
   private base?: string;
+  private extensions = false;
 
-  public buildRuleSet(code: string): RuleSet {
+  public buildRuleSet(code: string, options?: { extensions?: boolean }): RuleSet {
+    this.extensions = options?.extensions ?? false;
     const parseResult = parseSRL(code);
-    
+
     if (parseResult.errors.length > 0) {
       throw new Error(`Parse errors: ${parseResult.errors.map(e => e.message).join(', ')}`);
     }
-    
+
     const cst = parseResult.cst as CstNode;
     return this.visitRuleSet(cst);
   }
@@ -249,6 +273,7 @@ export class ASTBuilder {
   private visitRuleSet(node: CstNode): RuleSet {
     const children = node.children as CSTChildren;
     const rules: Rule[] = [];
+    const targetedRules: TargetedRule[] = [];
     const declarations: Declaration[] = [];
     const dataBlocks: DataBlock[] = [];
 
@@ -266,7 +291,12 @@ export class ASTBuilder {
 
     if (children.rule) {
       for (const ruleNode of children.rule) {
-        rules.push(this.visitRule(ruleNode as CstNode));
+        const built = this.visitRule(ruleNode as CstNode);
+        if (built.type === 'targetedRule') {
+          targetedRules.push(built);
+        } else {
+          rules.push(built);
+        }
       }
     }
 
@@ -286,6 +316,7 @@ export class ASTBuilder {
       base: this.base,
       prefixes: new Map(this.prefixes),
       rules,
+      targetedRules,
       declarations,
       dataBlocks,
     };
@@ -311,7 +342,7 @@ export class ASTBuilder {
     }
   }
 
-  private visitRule(node: CstNode): Rule {
+  private visitRule(node: CstNode): Rule | TargetedRule {
     const children = node.children as CSTChildren;
 
     if (children.rule1) {
@@ -323,30 +354,64 @@ export class ASTBuilder {
     throw new Error('Unknown rule type');
   }
 
-  // Rule1 (`RULE iri? { head } WHERE { body }`) and Rule2 (`IF { body } THEN
-  // { head }`) build the same Rule; only Rule1 carries an optional naming IRI
-  // (absent in the Rule2 CST, so reading it unconditionally yields undefined).
-  private visitRule1(node: CstNode): Rule {
+  // Rule1 (`RULE iri? ForClause? { head } WHERE { body }`) and Rule2
+  // (`IF { body } THEN iri? ForClause? { head }`) both delegate to buildRule.
+  // Rule1's CST carries the `Rule` token child; rule2's does not — that
+  // distinction is used by buildRule to detect the rule2-naming-IRI extension.
+  private visitRule1(node: CstNode): Rule | TargetedRule {
     return this.buildRule(node);
   }
 
-  private visitRule2(node: CstNode): Rule {
+  private visitRule2(node: CstNode): Rule | TargetedRule {
     return this.buildRule(node);
   }
 
-  private buildRule(node: CstNode): Rule {
+  private buildRule(node: CstNode): Rule | TargetedRule {
     const children = node.children as CSTChildren;
     const headNode = children.headTemplate?.[0] as CstNode;
     const bodyNode = children.bodyPattern?.[0] as CstNode;
     const nameNode = children.iriRef?.[0] as CstNode | undefined;
+    const forNode = children.forClause?.[0] as CstNode | undefined;
 
-    return {
+    const rule: Rule = {
       type: 'rule',
       name: nameNode ? this.visitIriRef(nameNode) : undefined,
       head: this.visitHeadTemplate(headNode),
       body: this.visitBodyPattern(bodyNode),
       location: getLocationFromNode(node),
     };
+
+    if (forNode) {
+      if (!this.extensions) {
+        throw new ExtensionError(
+          "The 'FOR ?v IN <shape>' clause is an opt-in extension; enable it with { extensions: true }."
+        );
+      }
+      const forChildren = forNode.children as CSTChildren;
+      const focusVar = this.visitVariable(forChildren.variable[0] as CstNode).value;
+      const shape = this.visitIriRef(forChildren.iriRef[0] as CstNode);
+      return {
+        type: 'targetedRule',
+        rule,
+        focusVar,
+        shape,
+        direction: 'rule-to-shape',
+        location: getLocationFromNode(node),
+      };
+    }
+
+    // A rule2 naming IRI without a FOR clause is extension-only surface.
+    // rule1 CST nodes always have a 'Rule' token child (from CONSUME(Rule) in
+    // the grammar); rule2 nodes do not (they start with 'If'). This key check
+    // reliably distinguishes the two forms inside buildRule.
+    const isRule2 = !('Rule' in children) && !!nameNode;
+    if (isRule2 && !this.extensions) {
+      throw new ExtensionError(
+        "A naming IRI on an 'IF..THEN' rule requires extensions: { extensions: true }."
+      );
+    }
+
+    return rule;
   }
 
   private visitDeclaration(node: CstNode): Declaration {
@@ -1250,7 +1315,7 @@ export class ASTBuilder {
   }
 }
 
-export function buildAST(code: string): RuleSet {
+export function buildAST(code: string, options?: { extensions?: boolean }): RuleSet {
   const builder = new ASTBuilder();
-  return builder.buildRuleSet(code);
+  return builder.buildRuleSet(code, options);
 }

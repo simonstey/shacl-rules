@@ -1,5 +1,7 @@
-import { Rule, TriplePattern, BodyElement, NegationElement, RDFTerm, PathExpression } from '../srl/ast';
+import { Store, DataFactory } from 'n3';
+import { Rule, TargetedRule, TriplePattern, BodyElement, NegationElement, RDFTerm, PathExpression } from '../srl/ast';
 import { isRDFTerm, isVariable, isTriplePattern } from './pattern-matcher';
+import { NodeShape, loadShape } from '../shapes/model';
 
 /**
  * Dependency graph and stratification for SHACL 1.2 Rules.
@@ -30,15 +32,73 @@ export interface StratifiedRule {
   originalIndex: number;
 }
 
-/** A stratification layer: disjoint sets of run-once and general rules. */
+export interface StratifiedTargetedRule {
+  targetedRule: TargetedRule;
+  originalIndex: number;
+}
+
+/** A stratification layer: disjoint sets of run-once, general, and targeted rules. */
 export interface StratificationLayer {
   once: StratifiedRule[];
   general: StratifiedRule[];
+  targeted: StratifiedTargetedRule[];
 }
 
 export interface StratificationCheck {
   stratifiable: boolean;
   reason?: string;
+}
+
+// ---------------------------------------------------------------------------
+// Shape predicate helpers
+// ---------------------------------------------------------------------------
+
+const RDF_TYPE_IRI = 'http://www.w3.org/1999/02/22-rdf-syntax-ns#type';
+
+/**
+ * Returns the set of predicate IRIs a shape reads when evaluating conformance.
+ * Port of py-srl `shape_referenced_predicates`.
+ */
+export function shapeReferencedPredicates(shape: NodeShape): Set<string> {
+  const preds = new Set<string>();
+  for (const [name, obj] of shape.targets) {
+    if (name === 'targetClass') {
+      preds.add(RDF_TYPE_IRI);
+    } else if (name === 'targetSubjectsOf' || name === 'targetObjectsOf') {
+      if (obj.termType === 'NamedNode') preds.add(obj.value);
+    }
+  }
+  for (const c of shape.constraints) {
+    if (c.kind === 'class') preds.add(RDF_TYPE_IRI);
+  }
+  for (const ps of shape.propertyShapes) {
+    if (ps.path && ps.path.termType === 'NamedNode') preds.add(ps.path.value);
+    for (const c of ps.constraints) {
+      if (c.kind === 'class') preds.add(RDF_TYPE_IRI);
+    }
+  }
+  return preds;
+}
+
+/** Extracts predicate IRIs asserted by a rule's head. */
+function headPredicateIris(rule: Rule): { iris: Set<string>; hasVar: boolean } {
+  const iris = new Set<string>();
+  let hasVar = false;
+  for (const p of rule.head.patterns) {
+    const pred = p.predicate;
+    if (isRDFTerm(pred)) {
+      if (pred.termType === 'iri') iris.add(pred.value);
+      else if (pred.termType === 'variable') hasVar = true;
+    } else {
+      // path in head is not valid in template family; treat as var-like
+      hasVar = true;
+    }
+  }
+  return { iris, hasVar };
+}
+
+function termForShape(iri: string) {
+  return DataFactory.namedNode(iri);
 }
 
 // ---------------------------------------------------------------------------
@@ -267,22 +327,105 @@ function assignStratumNumbers(n: number, edges: Edge[]): number[] {
 }
 
 /**
- * Stratify rules into an ordered sequence of (once, general) layers.
+ * Stratify rules into an ordered sequence of (once, general, targeted) layers.
+ *
+ * When targetedRules and shapesStore are supplied, targeted rules occupy
+ * additional vertices in the dependency graph. A CLOSED gate edge is added
+ * from each targeted rule vertex to any plain-rule vertex whose head can
+ * assert a predicate the shape reads, ensuring the targeted rule fires in a
+ * strictly higher stratum than any rule that feeds its shape.
  *
  * Throws if the stratification condition is violated (a cycle containing a
- * closed edge — negation, assignment, or blank-node head in a cycle).
+ * closed edge — negation, assignment, blank-node head, or gate edge in a cycle).
  */
-export function stratifyRules(rules: Rule[]): StratificationLayer[] {
-  if (rules.length === 0) return [];
-
+export function stratifyRules(
+  rules: Rule[],
+  targetedRules: TargetedRule[] = [],
+  shapesStore?: Store,
+): StratificationLayer[] {
   const n = rules.length;
+  const m = targetedRules.length;
+  if (n === 0 && m === 0) return [];
+
   const edges = buildDependencyGraph(rules);
-  const stratum = assignStratumNumbers(n, edges);
+
+  // Targeted rules occupy vertices n..n+m-1 (extension: rule-to-shape targeting).
+  if (m > 0) {
+    // (vertex id, wrapped Rule) for every vertex — plain and targeted.
+    const allVertices: Array<{ vertex: number; rule: Rule }> = [];
+    for (let i = 0; i < n; i++) allVertices.push({ vertex: i, rule: rules[i] });
+    for (let t = 0; t < m; t++) allVertices.push({ vertex: n + t, rule: targetedRules[t].rule });
+
+    // Add body-pattern dependency edges from srcVertex to every OTHER vertex
+    // whose head the pattern could match (open/closed as usual).
+    const addBodyDeps = (srcVertex: number, srcRule: Rule): void => {
+      const bodyDeps = bodyPatternDependencies(srcRule);
+      const forceClosed = hasAssignment(srcRule) || headHasBlankNode(srcRule);
+      for (const { pattern, label } of bodyDeps) {
+        const lbl: EdgeLabel = forceClosed ? CLOSED : label;
+        for (const { vertex: vj, rule: rj } of allVertices) {
+          if (vj === srcVertex) continue;
+          if (patternDependsOnRule(pattern, rj)) {
+            edges.push({ from: srcVertex, to: vj, label: lbl });
+          }
+        }
+      }
+    };
+
+    // (1) Targeted rules' bodies may depend on any (plain or targeted) head.
+    for (let t = 0; t < m; t++) addBodyDeps(n + t, targetedRules[t].rule);
+
+    // (2) Plain rules' bodies may depend on targeted-rule heads (the plain-only
+    // buildDependencyGraph above did not see targeted vertices).
+    for (let i = 0; i < n; i++) {
+      const bodyDeps = bodyPatternDependencies(rules[i]);
+      const forceClosed = hasAssignment(rules[i]) || headHasBlankNode(rules[i]);
+      for (const { pattern, label } of bodyDeps) {
+        const lbl: EdgeLabel = forceClosed ? CLOSED : label;
+        for (let t = 0; t < m; t++) {
+          if (patternDependsOnRule(pattern, targetedRules[t].rule)) {
+            edges.push({ from: i, to: n + t, label: lbl });
+          }
+        }
+      }
+    }
+
+    // (3) Gate: CLOSED edge from each targeted rule to any vertex whose head can
+    // assert a predicate its shape reads (places the targeted rule strictly above
+    // any rule that could change its shape's conformance verdict).
+    if (shapesStore) {
+      for (let t = 0; t < m; t++) {
+        let refs: Set<string>;
+        try {
+          const shape = loadShape(shapesStore, termForShape(targetedRules[t].shape));
+          refs = shapeReferencedPredicates(shape);
+        } catch {
+          // Shape failed to load (e.g. unsupported SHACL feature). Skip this
+          // targeted rule's gate edges so valid plain-rule stratification still
+          // proceeds; the executor's applyTargetedRule will surface the load
+          // error per-rule into ExecutionResult.errors at evaluation time.
+          continue;
+        }
+        if (!refs.size) continue;
+        for (const { vertex: vj, rule: rj } of allVertices) {
+          if (vj === n + t) continue;
+          const { iris, hasVar } = headPredicateIris(rj);
+          if (hasVar || [...iris].some(iri => refs.has(iri))) {
+            edges.push({ from: n + t, to: vj, label: CLOSED });
+          }
+        }
+      }
+    }
+  }
+
+  const total = n + m;
+  const stratum = assignStratumNumbers(total, edges);
   const maxStratum = stratum.length > 0 ? Math.max(...stratum) : 0;
 
   const layers: StratificationLayer[] = Array.from({ length: maxStratum + 1 }, () => ({
     once: [],
     general: [],
+    targeted: [],
   }));
 
   for (let i = 0; i < n; i++) {
@@ -292,6 +435,9 @@ export function stratifyRules(rules: Rule[]): StratificationLayer[] {
     } else {
       layers[stratum[i]].general.push(entry);
     }
+  }
+  for (let t = 0; t < m; t++) {
+    layers[stratum[n + t]].targeted.push({ targetedRule: targetedRules[t], originalIndex: t });
   }
 
   return layers;

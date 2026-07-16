@@ -1,0 +1,23 @@
+# FOR ?v IN <shape> — opt-in extension example
+#
+# This rule fires only for focus nodes that conform to ex:AdultShape.
+# ?this is pre-bound to each conforming node; the body and head see it
+# as already set.
+#
+# Requires:  buildAST(srl, { extensions: true })
+#            executeRules(ruleSet, data, { extensions: true, shapesGraph: … })
+#
+# Companion shapes graph (Turtle):
+#   ex:AdultShape a sh:NodeShape ;
+#     sh:targetClass ex:Person ;
+#     sh:property [ sh:path ex:age ; sh:minCount 1 ; sh:minInclusive 18 ] .
+#
+# With data ex:Alice ex:age 30 and ex:Bob ex:age 10 (both ex:Person),
+# only ex:Alice ex:status ex:adult is inferred.
+
+PREFIX ex: <http://example.org/>
+
+RULE ex:r FOR ?this IN ex:AdultShape
+  { ?this ex:status ex:adult }
+WHERE
+  { ?this ex:age ?a }

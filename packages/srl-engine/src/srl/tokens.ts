@@ -40,6 +40,7 @@ export const Set = keyword('Set', 'SET');
 export const Transitive = keyword('Transitive', 'TRANSITIVE');
 export const Symmetric = keyword('Symmetric', 'SYMMETRIC');
 export const Inverse = keyword('Inverse', 'INVERSE');
+export const For = keyword('For', 'FOR');
 export const Version = keyword('Version', 'VERSION');
 export const Imports = keyword('Imports', 'IMPORTS');
 export const In = keyword('In', 'IN');
@@ -201,6 +202,7 @@ export const allTokens = [
   Transitive,
   Symmetric,
   Inverse,
+  For,
   In,
   Version,
   Imports,

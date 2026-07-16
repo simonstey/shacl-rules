@@ -3,7 +3,7 @@
 // setCurrentStore/Now, ASTBuilder, SRLParser) are intentionally not exported.
 
 // ── Language front end ──────────────────────────────────────────────
-export { buildAST } from './srl/ast';
+export { buildAST, ExtensionError } from './srl/ast';
 export {
   parseSRL,
   getSerializedGrammar,
@@ -27,6 +27,7 @@ export type {
   RuleHead,
   RuleBody,
   Rule,
+  TargetedRule,
   TransitiveDeclaration,
   SymmetricDeclaration,
   InverseDeclaration,
@@ -60,7 +61,9 @@ export {
   isRunOnce,
   hasAssignment,
   headHasBlankNode,
+  shapeReferencedPredicates,
   type StratifiedRule,
+  type StratifiedTargetedRule,
   type StratificationLayer,
   type StratificationCheck,
 } from './rules/stratifier';
@@ -79,6 +82,13 @@ export {
   type SolutionMapping,
 } from './rules/pattern-matcher';
 export type { EvalResult } from './rules/expression-evaluator';
+
+// ── Shapes (opt-in FOR ?v IN <shape> targeting) ──────────────────────
+export {
+  loadShape, focusNodes, conforms,
+  UnsupportedShapeFeatureError,
+  type NodeShape, type PropertyShape, type Constraint,
+} from './shapes';
 
 // ── Validation ──────────────────────────────────────────────────────
 export {

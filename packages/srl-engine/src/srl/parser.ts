@@ -15,6 +15,7 @@ import {
   Transitive,
   Symmetric,
   Inverse,
+  For,
   In,
   Version,
   Imports,
@@ -122,21 +123,36 @@ export class SRLParser extends CstParser {
     ]);
   });
 
-  // Rule1 = 'RULE' iri? HeadTemplate 'WHERE' BodyPattern  ([12] — optional naming IRI)
+  // Rule1 = 'RULE' iri? ForClause? HeadTemplate 'WHERE' BodyPattern
   private rule1 = this.RULE('rule1', () => {
     this.CONSUME(Rule);
     this.OPTION(() => this.SUBRULE(this.iriRef));
+    this.OPTION2(() => this.SUBRULE(this.forClause));
     this.SUBRULE(this.headTemplate);
     this.CONSUME(Where);
     this.SUBRULE(this.bodyPattern);
   });
 
-  // Rule2 = 'IF' BodyPattern 'THEN' HeadTemplate  ([13])
+  // Rule2 = 'IF' BodyPattern 'THEN' iri? ForClause? HeadTemplate
+  // Base spec rule2 has no naming IRI; the iri?/ForClause? here are extension
+  // surface, gated at AST-build time (a bare naming IRI without FOR is rejected
+  // when extensions are off).
   private rule2 = this.RULE('rule2', () => {
     this.CONSUME(If);
     this.SUBRULE(this.bodyPattern);
     this.CONSUME(Then);
+    this.OPTION(() => this.SUBRULE(this.iriRef));
+    this.OPTION2(() => this.SUBRULE(this.forClause));
     this.SUBRULE(this.headTemplate);
+  });
+
+  // ForClause = 'FOR' Var 'IN' iri  — opt-in rule-to-shape targeting extension.
+  // Always parsed; rejected at AST-build time when extensions are off.
+  private forClause = this.RULE('forClause', () => {
+    this.CONSUME(For);
+    this.SUBRULE(this.variable);
+    this.CONSUME(In);
+    this.SUBRULE(this.iriRef);
   });
 
   // Declaration = 'TRANSITIVE' '(' iri ')' | '(' iri ')' 'SYMMETRIC' | 'INVERSE' '(' iri ',' iri ')'  ([27])
@@ -768,6 +784,7 @@ const RULE_CATEGORIES: Record<string, GrammarRuleInfo['category']> = {
   rule: 'rules',
   rule1: 'rules',
   rule2: 'rules',
+  forClause: 'rules',
   declaration: 'rules',
   dataBlock: 'rules',
   headTemplate: 'patterns',

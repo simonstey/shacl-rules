@@ -1,7 +1,8 @@
-import { Store, Quad, Parser as N3Parser, NamedNode, Literal, BlankNode } from 'n3';
+import { Store, Quad, Parser as N3Parser, NamedNode, Literal, BlankNode, DataFactory } from 'n3';
 import {
   RuleSet,
   Rule,
+  TargetedRule,
   TriplePattern,
   BodyElement,
   Declaration,
@@ -18,7 +19,10 @@ import {
   isRDFTerm
 } from './pattern-matcher';
 import { evaluateFilter, evaluateExpression, resultToTerm, setCurrentStore, setCurrentNow } from './expression-evaluator';
-import { stratifyRules, StratificationLayer, StratifiedRule } from './stratifier';
+import { stratifyRules, StratificationLayer, StratifiedRule, isRunOnce } from './stratifier';
+import { focusNodes } from '../shapes/targets';
+import { conforms } from '../shapes/validate';
+import { loadShape } from '../shapes/model';
 
 export interface InferredTriple {
   quad: Quad;
@@ -48,6 +52,9 @@ export interface ExecutionResult {
 export interface ExecutorOptions {
   maxIterations?: number;
   includeBaseTriples?: boolean;
+  extensions?: boolean;
+  shapesGraph?: string;
+  shapesStore?: Store;
 }
 
 const DEFAULT_OPTIONS: ExecutorOptions = {
@@ -270,9 +277,36 @@ export function executeRules(
     originalRule: rule,
   }));
 
+  // Resolve the shapes graph (opt-in targeting). shapesStore wins if both given.
+  let shapesStore: Store | undefined = opts.shapesStore;
+  if (!shapesStore && opts.shapesGraph) {
+    try {
+      shapesStore = new Store();
+      shapesStore.addQuads(new N3Parser().parse(opts.shapesGraph));
+    } catch (e) {
+      errors.push(`Failed to parse shapes graph: ${e instanceof Error ? e.message : String(e)}`);
+      shapesStore = undefined;
+    }
+  }
+  const targetedRules = ruleSet.targetedRules ?? [];
+  if (targetedRules.length > 0 && !shapesStore) {
+    errors.push('Targeted rules (FOR ?v IN <shape>) require a shapes graph; pass options.shapesGraph or options.shapesStore.');
+  }
+
+  const targetedRuleInfos = new Map<TargetedRule, RuleInfo>();
+  targetedRules.forEach((tr, t) => {
+    targetedRuleInfos.set(tr, {
+      index: allRules.length + 1 + t,
+      name: tr.rule.name ?? `Targeted rule ${t + 1} (FOR ?${tr.focusVar})`,
+      location: tr.location,
+      head: tr.rule.head.patterns,
+      originalRule: tr.rule,
+    });
+  });
+
   let stratified: StratificationLayer[] = [];
   try {
-    stratified = stratifyRules(allRules);
+    stratified = stratifyRules(allRules, shapesStore ? targetedRules : [], shapesStore);
   } catch (e) {
     errors.push(`Stratification failed: ${e instanceof Error ? e.message : String(e)}`);
   }
@@ -371,6 +405,38 @@ export function executeRules(
     return produced;
   };
 
+  const applyTargetedRule = (tr: TargetedRule): boolean => {
+    if (!shapesStore) return false;
+    const ruleInfo = targetedRuleInfos.get(tr)!;
+    let produced = false;
+    try {
+      const shape = loadShape(shapesStore, DataFactory.namedNode(tr.shape));
+      const candidates = focusNodes(shape, store, shapesStore);
+      for (const node of candidates) {
+        if (!conforms(node, shape, store, shapesStore)) continue;
+        const seed: SolutionMapping = { [tr.focusVar]: node };
+        const solutions = evaluateElements(tr.rule.body.elements, [seed], store);
+        for (const solution of solutions) {
+          for (const headPattern of tr.rule.head.patterns) {
+            const quad = instantiateTriple(headPattern, solution);
+            if (quad) {
+              const quadStr = quadToString(quad);
+              if (!seenTriples.has(quadStr)) {
+                seenTriples.add(quadStr);
+                store.addQuad(quad);
+                inferredTriples.push({ quad, quadString: quadStr, sourceRule: ruleInfo, iteration: totalIterations });
+                produced = true;
+              }
+            }
+          }
+        }
+      }
+    } catch (e) {
+      errors.push(`Error evaluating targeted rule "${ruleInfo?.name ?? tr.shape}": ${e instanceof Error ? e.message : String(e)}`);
+    }
+    return produced;
+  };
+
   for (const layer of stratified) {
     // Run-once rules (assignment or blank-node head) fire exactly once, before
     // the general rules of the same stratum iterate to a fixpoint.
@@ -378,9 +444,13 @@ export function executeRules(
     for (const stratRule of layer.once) {
       applyRule(stratRule);
     }
+    for (const st of layer.targeted) {
+      if (isRunOnce(st.targetedRule.rule)) applyTargetedRule(st.targetedRule);
+    }
 
+    const generalTargeted = layer.targeted.filter(st => !isRunOnce(st.targetedRule.rule));
     let layerIteration = 0;
-    let changed = layer.general.length > 0;
+    let changed = layer.general.length > 0 || generalTargeted.length > 0;
 
     while (changed && layerIteration < (opts.maxIterations || 100)) {
       changed = false;
@@ -392,7 +462,16 @@ export function executeRules(
           changed = true;
         }
       }
+      for (const st of generalTargeted) {
+        if (applyTargetedRule(st.targetedRule)) changed = true;
+      }
     }
+  }
+
+  // Include targeted-rule provenance entries in the returned rule list so
+  // consumers grouping inferred triples by rule can resolve targeted rules too.
+  for (const info of targetedRuleInfos.values()) {
+    ruleInfos.push(info);
   }
 
   const executionTime = performance.now() - startTime;
