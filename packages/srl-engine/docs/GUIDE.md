@@ -27,6 +27,7 @@ step.
 11. [Error handling](#11-error-handling)
 12. [Recipes](#12-recipes)
 13. [Gotchas & limits](#13-gotchas--limits)
+14. [SHACL shape targeting (opt-in extension)](#14-shacl-shape-targeting-opt-in-extension)
 
 ---
 
@@ -470,3 +471,114 @@ const synthetic = expandDeclarations(ruleSet.declarations, ruleSet.prefixes);
 - **`parserInstance` is a stateful singleton** — the engine is single-threaded
   by design (fine for the browser/Node request model). Don't call `parseSRL` /
   `buildAST` concurrently from multiple threads sharing one module instance.
+
+---
+
+## 14. SHACL shape targeting (opt-in extension)
+
+> **Not part of W3C SHACL 1.2 Rules.** This is an opt-in extension, off by
+> default. Spec-conformant documents are unaffected — passing `{ extensions:
+> true }` is required to parse or execute `FOR` clauses.
+
+### What it does
+
+A `FOR ?v IN <shape>` clause on a rule pre-binds the focus variable `?v` to
+each node that **conforms** to the named SHACL shape in the supplied shapes
+graph. The rule then fires once per conforming node, with `?v` already set —
+the body and head see it as a bound variable.
+
+This is equivalent to a virtual body element `TARGET(?v, <shape>)` that seeds
+the body's initial solution mappings.
+
+### Shapes graph input
+
+Supply the shapes graph as a Turtle string (`shapesGraph`) or a pre-parsed N3
+`Store` (`shapesStore`) in `ExecutorOptions`:
+
+```ts
+executeRules(ruleSet, data, {
+  extensions: true,
+  shapesGraph: myShapesTurtle,   // parsed internally by the engine
+  // — or —
+  shapesStore: myPreParsedStore, // use an N3 Store you already have
+});
+```
+
+`validateSRL` also accepts `{ extensions: true }` — it validates the wrapped
+rule with the focus variable already in the bound-variable set (`V₀ = { ?v }`).
+
+### Worked example: adult status
+
+**Shapes graph** — `ex:AdultShape` targets instances of `ex:Person` that have
+`ex:age ≥ 18`:
+
+```turtle
+@prefix sh:  <http://www.w3.org/ns/shacl#> .
+@prefix ex:  <http://example.org/> .
+
+ex:AdultShape a sh:NodeShape ;
+  sh:targetClass ex:Person ;
+  sh:property [
+    sh:path        ex:age ;
+    sh:minCount    1 ;
+    sh:minInclusive 18
+  ] .
+```
+
+**SRL rules** — infer `ex:status ex:adult` only for conforming persons:
+
+```srl
+PREFIX ex: <http://example.org/>
+
+RULE ex:adultStatus FOR ?this IN ex:AdultShape
+  { ?this ex:status ex:adult }
+WHERE
+  { ?this ex:age ?a }
+```
+
+**RDF data**:
+
+```turtle
+@prefix ex:  <http://example.org/> .
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+
+ex:Alice rdf:type ex:Person ; ex:age 30 .
+ex:Bob   rdf:type ex:Person ; ex:age 10 .
+```
+
+**Run it**:
+
+```ts
+import { buildAST, executeRules } from 'srl-engine';
+
+const ruleSet = buildAST(srl, { extensions: true });
+const result  = executeRules(ruleSet, data, {
+  extensions:  true,
+  shapesGraph: shapes,
+});
+
+for (const t of result.inferredTriples) {
+  console.log(t.quadString);
+}
+// <http://example.org/Alice> <http://example.org/status> <http://example.org/adult>
+//
+// Bob (age 10 < 18) does NOT conform to ex:AdultShape, so the rule never fires
+// for him and ex:Bob ex:status ex:adult is not inferred.
+```
+
+### Stratification guarantee
+
+The engine automatically places a targeted rule in a stratum **strictly above**
+any rule whose inferences could affect the shape's conformance result (its
+target predicates and constraint paths — here `rdf:type` and `ex:age`). This
+ensures the set of conforming focus nodes is frozen before the targeted rule
+fires, providing a termination guarantee without requiring monotone conformance.
+
+### SHACL Core subset
+
+The engine implements an intentional subset of SHACL 1.2 Core. Unsupported
+features (e.g. `sh:sparql`, `sh:closed`, `sh:qualifiedValueShape`) throw an
+`UnsupportedShapeFeatureError` at load time rather than silently mis-scoping
+the rule. See
+[`docs/shacl-core-support-matrix.md`](shacl-core-support-matrix.md)
+for the complete supported/unsupported matrix.

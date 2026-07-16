@@ -103,6 +103,11 @@ any one means touching the full syntax stack: `tokens.ts` → `parser.ts` →
 
 ## 🚧 Extension: `FOR ?v IN <shape>` shape-targeting clause
 
+> **Status:** X1–X6 DONE (phases 0–5 merged on `feat/for-in-shape-clause`). X7 still deferred.
+> See design doc `docs/superpowers/specs/2026-07-16-for-in-shape-clause-design.md`,
+> plan `docs/superpowers/plans/2026-07-16-for-in-shape-clause.md`, and implementation
+> in `packages/srl-engine/src/shapes/`.
+
 **Source of truth:** `../py-srl/docs/for-in-shape-clause.md` (reference
 implementation + spec-proposal writeup). This is an **opt-in extension, NOT
 part of W3C SHACL 1.2 Rules** — py-srl gates it behind `--extensions`/`-x`
@@ -147,7 +152,7 @@ option, not layered over the base grammar.
 Implementing touches the full syntax stack (per the "Adding SRL syntax"
 checklist in the root `CLAUDE.md`) **plus a new shapes module**. Sub-items:
 
-### X1 — New SHACL-Core-subset shapes subsystem (the main lift)
+### X1 — New SHACL-Core-subset shapes subsystem (the main lift) ✅ DONE
 - **Where (new):** `packages/srl-engine/src/shapes/` — port py-srl's
   `src/srl/shapes/` (`load_shape`, `focusNodes`, `conforms`) to operate over the
   N3 `Store` the engine already uses.
@@ -168,7 +173,7 @@ checklist in the root `CLAUDE.md`) **plus a new shapes module**. Sub-items:
   `_PROP_CONSTRAINTS`) for the authoritative supported sets. Port test coverage
   alongside (`tests/test_shape_targeting.py`).
 
-### X2 — Tokens + grammar (`FOR`/`IN`, gated)
+### X2 — Tokens + grammar (`FOR`/`IN`, gated) ✅ DONE
 - **Where:** `packages/srl-engine/src/srl/tokens.ts` (new `For` / `In`
   keywords, correct priority slot in `allTokens` — keywords precede
   `Identifier`); `parser.ts` `rule1`/`rule2` (optional
@@ -182,7 +187,7 @@ checklist in the root `CLAUDE.md`) **plus a new shapes module**. Sub-items:
   a grammar toggle. Parse the optional clause always, then **reject it in a
   post-parse pass when `extensions` is off** (mirrors py-srl's `ExtensionError`).
 
-### X3 — AST representation
+### X3 — AST representation ✅ DONE
 - **Where:** `packages/srl-engine/src/srl/ast.ts` (`buildAST` CST-visitor + new
   type); `RuleSet` (`ast.ts:118`); export from `index.ts`.
 - **What:** mirror py-srl's `TargetedRule(rule, focusVar, shape, direction)` —
@@ -191,7 +196,7 @@ checklist in the root `CLAUDE.md`) **plus a new shapes module**. Sub-items:
   `RuleSet.targeted_rules` vs `RuleSet.rules`); add the analogous field to the TS
   `RuleSet` and export the new type from the barrel.
 
-### X4 — Executor: seed + shapes-graph plumbing + stratifier gate
+### X4 — Executor: seed + shapes-graph plumbing + stratifier gate ✅ DONE
 - **Where:** `packages/srl-engine/src/rules/executor.ts` (`executeRules`,
   `executor.ts:238`; `ExecutorOptions`); `stratifier.ts` (`stratifyRules`,
   `stratifier.ts:275`).
@@ -208,7 +213,7 @@ checklist in the root `CLAUDE.md`) **plus a new shapes module**. Sub-items:
   termination without needing monotone `conforms`). A cyclic shape-gate
   dependency throws the existing closed-cycle error (`StratificationError`).
 
-### X5 — Validator: well-formedness basis + gating
+### X5 — Validator: well-formedness basis + gating ✅ DONE
 - **Where:** `packages/srl-engine/src/validation/validator.ts`
   (`checkAstSemantics`, `validator.ts:306`; `validateSRL`, `validator.ts:335`).
 - **What:** validate the wrapped rule with initial bound-variable set
@@ -217,7 +222,7 @@ checklist in the root `CLAUDE.md`) **plus a new shapes module**. Sub-items:
   rejection and any shape-load / unsupported-feature errors as validation
   messages. Needs the same shapes-graph input as the executor (X4).
 
-### X6 — Extensions gating flag (off by default)
+### X6 — Extensions gating flag (off by default) ✅ DONE
 - **What:** thread an `extensions` boolean through the public parse / validate /
   execute API, defaulting **false**, so a spec-conformant document is unaffected
   and the `FOR` clause is only reachable when explicitly enabled. Mirrors
@@ -234,6 +239,29 @@ checklist in the root `CLAUDE.md`) **plus a new shapes module**. Sub-items:
   `apps/playground/src/lib/monaco/srl-language.ts` and a shapes-graph editor is a
   playground UI concern — **out of the srl-engine package's scope**, tracked
   separately if/when the playground exposes the extension.
+
+---
+
+## 🧹 Tech debt (surfaced during FOR feature implementation)
+
+### T3 — `inversePath` does not recurse into nested paths
+- **Where:** `packages/srl-engine/src/shapes/validate.ts` — `valueNodesViaPath`
+  handles `inversePath` only when its inner path is a plain IRI. Nested forms
+  (`inversePath(inversePath(…))`, `inversePath(sequence(…))`) throw
+  `UnsupportedShapeFeatureError`; py-srl `_shacl_path_to_ast` recurses fully.
+- **Why deferred:** no oracle test exercises the nested case; the simple
+  `inversePath(IRI)` form covers practical uses. Candidate for a future pass.
+- **Fix:** generalise `valueNodesViaPath` to recurse when the inner path is
+  itself a path node, matching py-srl's recursive `_shacl_path_to_ast`.
+
+### T4 — `validateSRL` does not check stratification of targeted rules
+- **Where:** `packages/srl-engine/src/validation/validator.ts` — `isStratifiable`
+  is called with `ruleSet.rules` only; `ruleSet.targetedRules` is omitted, so a
+  cyclic shape-gate dependency is NOT caught by `validateSRL` (it IS caught at
+  execution time via `stratifyRules → result.errors`).
+- **Why deferred:** pre-existing asymmetry; the runtime gate provides safety.
+- **Fix:** extend the `isStratifiable` / `stratifyRules` call in `checkAstSemantics`
+  to accept `targetedRules` and a shapes store, mirroring the executor path.
 
 ---
 

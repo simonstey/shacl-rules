@@ -42,13 +42,14 @@ node examples/01-basic-inference.mjs
 | [`04-property-paths.mjs`](04-property-paths.mjs) | Sequence (`/`) and inverse (`^`) property paths, plus a `FILTER`. |
 | [`05-validation-diagnostics.mjs`](05-validation-diagnostics.mjs) | `validateSRL` on valid + invalid input; error vs warning; message positions. |
 | [`06-data-blocks-and-provenance.mjs`](06-data-blocks-and-provenance.mjs) | `DATA { … }` seeding, per-triple provenance, assembling the full output graph. |
+| [`07-for-in-shape.mjs`](07-for-in-shape.mjs) | **Extension:** `FOR ?v IN <shape>` shape targeting — fires only for conforming focus nodes. Requires `{ extensions: true }`. |
 
 Each script prints its expected output as a trailing comment.
 
 ## Learning path
 
 Read them in order — they build up from a single rule (01) through declarations
-(02), negation + assignment (03), paths (04), diagnostics (05), to provenance
-and full-graph assembly (06). For the concepts behind them, see the
-[How-To Guide](../docs/GUIDE.md); for the API surface, the
+(02), negation + assignment (03), paths (04), diagnostics (05), provenance and
+full-graph assembly (06), to SHACL shape targeting (07). For the concepts
+behind them, see the [How-To Guide](../docs/GUIDE.md); for the API surface, the
 [package README](../README.md).
