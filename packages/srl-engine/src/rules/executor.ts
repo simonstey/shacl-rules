@@ -60,7 +60,7 @@ const DEFAULT_OPTIONS: ExecutorOptions = {
   maxIterations: 100,
 };
 
-export function expandDeclarations(declarations: Declaration[], prefixes: Map<string, string>): Rule[] {
+export function expandDeclarations(declarations: Declaration[], _prefixes?: Map<string, string>): Rule[] {
   const expandedRules: Rule[] = [];
   
   for (const decl of declarations) {
@@ -232,7 +232,7 @@ function generateRuleName(rule: Rule, index: number): string {
     const firstPattern = headPatterns[0];
     const pred = firstPattern.predicate;
     if (isRDFTerm(pred) && pred.termType === 'iri') {
-      const localName = pred.value.split(/[#\/]/).pop() || pred.value;
+      const localName = pred.value.split(/[#/]/).pop() || pred.value;
       return `Rule ${index + 1}: ${localName}`;
     }
   }

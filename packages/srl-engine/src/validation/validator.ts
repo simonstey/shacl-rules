@@ -10,7 +10,6 @@ import {
   TriplePattern,
   Expression,
   SourceLocation,
-  TargetedRule,
 } from '../srl/ast';
 import { expandDeclarations } from '../rules/executor';
 import { isStratifiable } from '../rules/stratifier';

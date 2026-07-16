@@ -1,4 +1,4 @@
-import { Term, Literal, NamedNode, DataFactory, Store } from 'n3';
+import { Term, Literal, DataFactory, Store } from 'n3';
 import { Expression, BinaryOperator, UnaryOperator } from '../srl/ast';
 import { SolutionMapping } from './pattern-matcher';
 
