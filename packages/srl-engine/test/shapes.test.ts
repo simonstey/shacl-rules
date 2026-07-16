@@ -58,4 +58,12 @@ RULE { ?s ex:q ?o } WHERE { ?s ex:p ?o }`);
     expect(rs.rules).toHaveLength(1);
     expect(rs.targetedRules).toHaveLength(0);
   });
+
+  it('allows a named rule1 without FOR with extensions off (backward compat)', () => {
+    const rs = buildAST(`PREFIX ex: <http://example.org/>
+RULE ex:r { ?s ex:q ?o } WHERE { ?s ex:p ?o }`);
+    expect(rs.rules).toHaveLength(1);
+    expect(rs.rules[0].name).toBe('http://example.org/r');
+    expect(rs.targetedRules).toHaveLength(0);
+  });
 });
