@@ -68,9 +68,21 @@ const DEFAULT_RDF = `@prefix : <http://example.org/> .
 :tom :siblingOf :jane .
 `;
 
+const DEFAULT_SHAPES = `@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix ex: <http://example.org/> .
+
+# SHACL shapes for FOR ?v IN <shape> rules (opt-in extension).
+# Select a "Shape Targeting" example to see this in action.
+ex:AdultShape a sh:NodeShape ;
+  sh:targetClass ex:Person ;
+  sh:property [ sh:path ex:age ; sh:minCount 1 ; sh:minInclusive 18 ] .
+`;
+
 export function Playground() {
   const [srlCode, setSrlCode] = useState(DEFAULT_SRL);
   const [rdfData, setRdfData] = useState(DEFAULT_RDF);
+  const [shapesGraph, setShapesGraph] = useState(DEFAULT_SHAPES);
+  const [activeDataTab, setActiveDataTab] = useState<'data' | 'shapes'>('data');
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   // Start dark to match the server-rendered markup (avoids hydration mismatch);
   // the real preference is resolved on mount in the effect below.
@@ -108,8 +120,8 @@ export function Playground() {
   }, [ruleSet]);
 
   useEffect(() => {
-    validate(srlCode);
-  }, [srlCode, validate]);
+    validate(srlCode, shapesGraph);
+  }, [srlCode, shapesGraph, validate]);
 
   // Initialize theme from the client environment once on mount. We render the
   // server default (dark) first and correct here, so the initial client render
@@ -144,6 +156,7 @@ export function Playground() {
     if (example.rdfData) {
       setRdfData(example.rdfData);
     }
+    setShapesGraph(example.shapesGraph ?? DEFAULT_SHAPES);
     resetExecution();
   }, [resetExecution]);
 
@@ -162,8 +175,8 @@ export function Playground() {
 
   const handleRunRules = useCallback(() => {
     setActiveRightTab('inferred');
-    execute(srlCode, rdfData);
-  }, [srlCode, rdfData, execute]);
+    execute(srlCode, rdfData, shapesGraph);
+  }, [srlCode, rdfData, shapesGraph, execute]);
 
   const handleRuleHover = useCallback((ruleInfo: RuleInfo | null) => {
     setHighlightedRuleIndex(ruleInfo?.index ?? null);
@@ -437,14 +450,49 @@ export function Playground() {
             <Panel defaultSize={isNarrow ? 60 : 75} minSize={isNarrow ? 30 : 40}>
               <ResizablePanels
                 stacked={isNarrow}
-                leftTitle="Data Graph (Turtle)"
+                leftTitle="Data / Shapes (Turtle)"
                 rightTitle="Rules (SRL)"
                 bottomTitle={showDiagramPanel ? "Syntax Diagrams" : "Syntax Analysis"}
                 defaultLeftSize={40}
                 defaultBottomSize={28}
                 showBottom={showSyntaxPanel || showDiagramPanel}
                 leftPanel={
-                  <RDFEditor value={rdfData} onChange={setRdfData} theme={theme} />
+                  <div className="h-full flex flex-col">
+                    <div role="tablist" aria-label="Graph editors" className="shrink-0 flex border-b border-border bg-surface-2">
+                      <button
+                        role="tab"
+                        id="tab-data"
+                        aria-selected={activeDataTab === 'data'}
+                        aria-controls="panel-graph-editor"
+                        onClick={() => setActiveDataTab('data')}
+                        className={activeDataTab === 'data' ? 'px-3 py-1.5 text-xs font-medium text-ink border-b-2 border-blue-500' : 'px-3 py-1.5 text-xs font-medium text-ink-muted hover:text-ink'}
+                      >
+                        Data
+                      </button>
+                      <button
+                        role="tab"
+                        id="tab-shapes"
+                        aria-selected={activeDataTab === 'shapes'}
+                        aria-controls="panel-graph-editor"
+                        onClick={() => setActiveDataTab('shapes')}
+                        className={activeDataTab === 'shapes' ? 'px-3 py-1.5 text-xs font-medium text-ink border-b-2 border-blue-500' : 'px-3 py-1.5 text-xs font-medium text-ink-muted hover:text-ink'}
+                      >
+                        Shapes
+                      </button>
+                    </div>
+                    <div
+                      className="flex-1 overflow-hidden"
+                      role="tabpanel"
+                      id="panel-graph-editor"
+                      aria-labelledby={activeDataTab === 'data' ? 'tab-data' : 'tab-shapes'}
+                    >
+                      {activeDataTab === 'data' ? (
+                        <RDFEditor value={rdfData} onChange={setRdfData} theme={theme} />
+                      ) : (
+                        <RDFEditor value={shapesGraph} onChange={setShapesGraph} theme={theme} />
+                      )}
+                    </div>
+                  </div>
                 }
                 rightPanel={
                   <SRLEditor

@@ -8,7 +8,7 @@ export function useValidation() {
   const [isValidating, setIsValidating] = useState(false);
   const debounceRef = useRef<NodeJS.Timeout | null>(null);
 
-  const validate = useCallback((code: string) => {
+  const validate = useCallback((code: string, shapesGraph?: string) => {
     if (debounceRef.current) {
       clearTimeout(debounceRef.current);
     }
@@ -16,7 +16,7 @@ export function useValidation() {
     setIsValidating(true);
 
     debounceRef.current = setTimeout(() => {
-      const validationResult = validateSRL(code);
+      const validationResult = validateSRL(code, { extensions: true, shapesGraph });
       setResult(validationResult);
       setIsValidating(false);
     }, DEBOUNCE_DELAY);
