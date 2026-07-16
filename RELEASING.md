@@ -24,6 +24,14 @@ npm -w srl-engine version patch        # or minor / major
 npm -w srl-engine publish --access public
 ```
 
+- **Before first publish, tighten the `exports` map for strict CJS consumers.** tsup emits `dist/index.d.cts`; add per-condition types so `require()` under `moduleResolution: node16/nodenext` resolves CJS-oriented declarations:
+  ```jsonc
+  ".": {
+    "import": { "types": "./dist/index.d.ts", "default": "./dist/index.js" },
+    "require": { "types": "./dist/index.d.cts", "default": "./dist/index.cjs" }
+  }
+  ```
+
 Recommended safety gate — add a `prepublishOnly` script to
 `packages/srl-engine/package.json` so a publish can never ship a stale/broken
 build:
