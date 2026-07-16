@@ -8,7 +8,7 @@ export function useValidation() {
   const [isValidating, setIsValidating] = useState(false);
   const debounceRef = useRef<NodeJS.Timeout | null>(null);
 
-  const validate = useCallback((code: string, shapesGraph?: string) => {
+  const validate = useCallback((code: string) => {
     if (debounceRef.current) {
       clearTimeout(debounceRef.current);
     }
@@ -16,7 +16,11 @@ export function useValidation() {
     setIsValidating(true);
 
     debounceRef.current = setTimeout(() => {
-      const validationResult = validateSRL(code, { extensions: true, shapesGraph });
+      // extensions:true lets FOR clauses validate as well-formed. The shapes
+      // graph is intentionally NOT passed: SRL well-formedness is AST-only, so
+      // feeding it here would be dead wiring and would re-validate on every
+      // shapes-editor keystroke for no benefit.
+      const validationResult = validateSRL(code, { extensions: true });
       setResult(validationResult);
       setIsValidating(false);
     }, DEBOUNCE_DELAY);

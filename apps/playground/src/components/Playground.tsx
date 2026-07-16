@@ -120,8 +120,8 @@ export function Playground() {
   }, [ruleSet]);
 
   useEffect(() => {
-    validate(srlCode, shapesGraph);
-  }, [srlCode, shapesGraph, validate]);
+    validate(srlCode);
+  }, [srlCode, validate]);
 
   // Initialize theme from the client environment once on mount. We render the
   // server default (dark) first and correct here, so the initial client render
@@ -458,12 +458,23 @@ export function Playground() {
                 showBottom={showSyntaxPanel || showDiagramPanel}
                 leftPanel={
                   <div className="h-full flex flex-col">
-                    <div role="tablist" aria-label="Graph editors" className="shrink-0 flex border-b border-border bg-surface-2">
+                    <div
+                      role="tablist"
+                      aria-label="Graph editors"
+                      className="shrink-0 flex border-b border-border bg-surface-2"
+                      onKeyDown={(e) => {
+                        if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
+                          e.preventDefault();
+                          setActiveDataTab((prev) => (prev === 'data' ? 'shapes' : 'data'));
+                        }
+                      }}
+                    >
                       <button
                         role="tab"
                         id="tab-data"
                         aria-selected={activeDataTab === 'data'}
                         aria-controls="panel-graph-editor"
+                        tabIndex={activeDataTab === 'data' ? 0 : -1}
                         onClick={() => setActiveDataTab('data')}
                         className={activeDataTab === 'data' ? 'px-3 py-1.5 text-xs font-medium text-ink border-b-2 border-blue-500' : 'px-3 py-1.5 text-xs font-medium text-ink-muted hover:text-ink'}
                       >
@@ -474,6 +485,7 @@ export function Playground() {
                         id="tab-shapes"
                         aria-selected={activeDataTab === 'shapes'}
                         aria-controls="panel-graph-editor"
+                        tabIndex={activeDataTab === 'shapes' ? 0 : -1}
                         onClick={() => setActiveDataTab('shapes')}
                         className={activeDataTab === 'shapes' ? 'px-3 py-1.5 text-xs font-medium text-ink border-b-2 border-blue-500' : 'px-3 py-1.5 text-xs font-medium text-ink-muted hover:text-ink'}
                       >
@@ -486,11 +498,15 @@ export function Playground() {
                       id="panel-graph-editor"
                       aria-labelledby={activeDataTab === 'data' ? 'tab-data' : 'tab-shapes'}
                     >
-                      {activeDataTab === 'data' ? (
-                        <RDFEditor value={rdfData} onChange={setRdfData} theme={theme} />
-                      ) : (
-                        <RDFEditor value={shapesGraph} onChange={setShapesGraph} theme={theme} />
-                      )}
+                      {/* One editor instance; the distinct `path` per tab gives each
+                          document its own Monaco model + undo stack, so a tab switch
+                          followed by undo can't clobber the other document's state. */}
+                      <RDFEditor
+                        value={activeDataTab === 'data' ? rdfData : shapesGraph}
+                        onChange={activeDataTab === 'data' ? setRdfData : setShapesGraph}
+                        path={activeDataTab === 'data' ? 'data.ttl' : 'shapes.ttl'}
+                        theme={theme}
+                      />
                     </div>
                   </div>
                 }
