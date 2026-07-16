@@ -3,7 +3,7 @@ import { SRLLexer, parseSRL, buildAST, ExtensionError } from '../src/index';
 import { Store, Parser, DataFactory } from 'n3';
 import { rdfList, pyValue, termKey, localName, SH } from '../src/shapes/rdf-helpers';
 
-const { namedNode, literal } = DataFactory;
+const { namedNode, literal, blankNode } = DataFactory;
 
 function storeFrom(ttl: string): Store {
   const s = new Store();
@@ -29,8 +29,18 @@ ex:s ex:list ( ex:a ex:b ex:c ) .`);
     expect(pyValue(literal('30', namedNode('http://www.w3.org/2001/XMLSchema#integer')))).toBe(30);
   });
 
-  it('gives value-based term keys', () => {
+  it('gives value-based term keys that differentiate type, datatype, and language', () => {
+    // Same term → same key (stable)
     expect(termKey(namedNode('http://example.org/x'))).toBe(termKey(namedNode('http://example.org/x')));
+    // Same .value, different term type → different keys
+    expect(termKey(namedNode('x'))).not.toBe(termKey(literal('x')));
+    expect(termKey(namedNode('x'))).not.toBe(termKey(blankNode('x')));
+    expect(termKey(literal('x'))).not.toBe(termKey(blankNode('x')));
+    // Same lexical value, different datatype → different keys
+    expect(termKey(literal('a', namedNode('http://example.org/dt1'))))
+      .not.toBe(termKey(literal('a', namedNode('http://example.org/dt2'))));
+    // Same lexical value, different language → different keys
+    expect(termKey(literal('a', 'en'))).not.toBe(termKey(literal('a', 'fr')));
   });
 
   it('extracts SHACL local names', () => {

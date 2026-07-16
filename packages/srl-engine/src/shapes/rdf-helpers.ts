@@ -16,7 +16,7 @@ export const RDF_NIL = `${RDF}nil`;
 export function termKey(term: Term): string {
   if (term.termType === 'Literal') {
     const lit = term as Literal;
-    return `L:${lit.value}${lit.datatype?.value ?? ''}${lit.language ?? ''}`;
+    return `L:${lit.value}|${lit.datatype?.value ?? ''}|${lit.language ?? ''}`;
   }
   if (term.termType === 'NamedNode') return `N:${term.value}`;
   if (term.termType === 'BlankNode') return `B:${term.value}`;
