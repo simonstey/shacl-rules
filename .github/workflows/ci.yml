@@ -1,0 +1,50 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install dependencies
+        # The committed lockfile is generated on Windows and records only the
+        # win32 rollup native binary, so a Linux runner never installs
+        # @rollup/rollup-linux-x64-gnu and tsup's rollup-based .d.ts build
+        # crashes (npm/cli#4828). Removing the lockfile before install lets the
+        # runner resolve the correct optional binaries for its own platform —
+        # npm's own documented workaround. (Mirrors deploy.yml.)
+        run: |
+          rm -f package-lock.json
+          npm install
+
+      # ── Engine: typecheck → lint → test → build ──────────────────────
+      - name: Engine typecheck
+        run: npm -w srl-engine run typecheck
+
+      - name: Engine lint
+        run: npm -w srl-engine run lint
+
+      - name: Engine test
+        run: npm -w srl-engine test
+
+      - name: Engine build
+        run: npm -w srl-engine run build
+
+      # ── Playground: build (tsc + static export) → lint ───────────────
+      - name: Playground build
+        run: npm -w playground run build
+
+      - name: Playground lint
+        run: npm -w playground run lint
