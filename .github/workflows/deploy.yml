@@ -32,17 +32,31 @@ jobs:
         uses: actions/configure-pages@v5
 
       - name: Install dependencies
-        run: npm ci
+        # The committed lockfile is generated on Windows and only records the
+        # win32 rollup native binary in its installed tree — it has NO
+        # node_modules entry for @rollup/rollup-linux-x64-gnu. Both `npm ci` and
+        # `npm install` honor that tree, so the Linux runner never installs the
+        # binary and tsup's rollup-based .d.ts build crashes (npm/cli#4828).
+        # Removing the lockfile before install lets the runner resolve the
+        # correct optional binaries for its own platform. This is npm's own
+        # documented workaround; reproducibility loss is negligible on an
+        # ephemeral runner.
+        run: |
+          rm -f package-lock.json
+          npm install
 
-      - name: Build
-        run: npm run build
+      - name: Build engine
+        run: npm -w srl-engine run build
+
+      - name: Build playground
+        run: npm -w playground run build
         env:
           NEXT_PUBLIC_BASE_PATH: /shacl-rules
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: ./out
+          path: ./apps/playground/out
 
   deploy:
     environment:
