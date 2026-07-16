@@ -101,6 +101,142 @@ any one means touching the full syntax stack: `tokens.ts` → `parser.ts` →
 
 ---
 
+## 🚧 Extension: `FOR ?v IN <shape>` shape-targeting clause
+
+**Source of truth:** `../py-srl/docs/for-in-shape-clause.md` (reference
+implementation + spec-proposal writeup). This is an **opt-in extension, NOT
+part of W3C SHACL 1.2 Rules** — py-srl gates it behind `--extensions`/`-x`
+(`SRLParser(extensions=True)` / `RuleEngine(..., extensions=True)`); with the
+flag off the parser rejects `FOR` and the engine raises `ExtensionError`, so a
+spec-conformant document is byte-for-byte unaffected. Any srl-engine port must
+preserve that same off-by-default gating.
+
+**What the clause does:** ties a single rule to a SHACL **shape** so the rule
+fires **only for the shape's conforming target focus nodes**, with an
+author-named focus variable pre-bound to each node. Both rule forms accept it as
+a rule-level prefix (never a body element):
+
+```sparql
+RULE ex:r FOR ?this IN ex:AdultShape { ?this ex:status ex:adult }
+WHERE { ?this ex:age ?a . FILTER(?a >= 18) }
+
+IF { ?this ex:age ?a } THEN ex:r FOR ?this IN ex:AdultShape { ?this ex:status ex:adult }
+```
+
+Formal semantics (§3.3 of the source doc): the ordinary spec rule seeds the body
+with `SEQ0 = { μ0 }` (one empty mapping, fires once globally); a targeted rule
+instead seeds `SEQ0 = { {v ↦ n} : n ∈ F(shape) }` where `F(shape)` is the shape's
+**conforming** focus nodes. Everything downstream (body matching, FILTER, NOT,
+SET, head instantiation) is the standard machinery on the wrapped rule. The one
+new premise reduces to a virtual body element `TARGET(v, s)`.
+
+**Why deferred:** srl-engine currently has **no SHACL shapes machinery at all**
+— no shapes-graph input, no target selection, no conformance. Grepping the
+engine source for `targetClass`/`focusVar`/`conforms`/`NodeShape` returns
+nothing. This is a new subsystem plus a full-stack syntax addition, not a
+localized change. It also decides an open API question (how the shapes graph is
+supplied to `executeRules`/`validateSRL`).
+
+**Architectural note (port ≠ copy):** py-srl splices `grammar-ext.lark` over an
+untouched base grammar (Lark). srl-engine's parser is **Chevrotain**
+(`parser.ts` builds one static grammar at class-construction time) — there is
+**no overlay/splice mechanism**. The `ForClause` must be inlined as an optional
+production inside `rule1`/`rule2` and gated at parse time behind an `extensions`
+option, not layered over the base grammar.
+
+Implementing touches the full syntax stack (per the "Adding SRL syntax"
+checklist in the root `CLAUDE.md`) **plus a new shapes module**. Sub-items:
+
+### X1 — New SHACL-Core-subset shapes subsystem (the main lift)
+- **Where (new):** `packages/srl-engine/src/shapes/` — port py-srl's
+  `src/srl/shapes/` (`load_shape`, `focusNodes`, `conforms`) to operate over the
+  N3 `Store` the engine already uses.
+- **What:** an in-house, intentionally partial SHACL 1.2 Core subset — no
+  external validator dep. Supported targets per the source doc §3.6:
+  `sh:targetClass`, `sh:targetNode`, `sh:targetSubjectsOf`, `sh:targetObjectsOf`,
+  plus the 1.2 additions `sh:targetWhere` and `sh:shape`. Supported constraints
+  are the query-shaped ones (triple-pattern + FILTER + path, plus COUNT/GROUP BY
+  for counts/`sh:xone`/uniqueness). The cut is **not** the monotone boundary:
+  non-monotone constraints (`sh:not`, `sh:maxCount`, `sh:xone`, `sh:uniqueLang`,
+  `sh:maxListLength`, `sh:uniqueMembers`) are admitted because termination comes
+  from the stratification gate (X4), not monotonicity. Excluded outright (raise
+  an `UnsupportedShapeFeatureError` at load time — never silently ignore, or the
+  rule mis-scopes): `sh:sparql`, `sh:closed`, `sh:qualifiedValueShape`, the
+  property-pair constraints, `sh:entailment`, `sh:deactivated`.
+- **How:** consult py-srl `docs/shacl-core-support-matrix.md` and
+  `src/srl/shapes/model.py` (`_TARGET_PREDS` / `_NODE_CONSTRAINTS` /
+  `_PROP_CONSTRAINTS`) for the authoritative supported sets. Port test coverage
+  alongside (`tests/test_shape_targeting.py`).
+
+### X2 — Tokens + grammar (`FOR`/`IN`, gated)
+- **Where:** `packages/srl-engine/src/srl/tokens.ts` (new `For` / `In`
+  keywords, correct priority slot in `allTokens` — keywords precede
+  `Identifier`); `parser.ts` `rule1`/`rule2` (optional
+  `ForClause ::= 'FOR' Var 'IN' iri`); add `for_clause`/targeting to
+  `RULE_CATEGORIES`.
+- **What:** production `[NEW] ForClause ::= 'FOR' Var 'IN' iri`, made optional in
+  `[12'] Rule1 ::= 'RULE' iri? ForClause? HeadTemplate 'WHERE' BodyPattern` and
+  `[13'] Rule2 ::= 'IF' BodyPattern 'THEN' iri? ForClause? HeadTemplate`. Body
+  grammar untouched.
+- **Gotcha:** Chevrotain builds its grammar once; the `extensions` gate can't be
+  a grammar toggle. Parse the optional clause always, then **reject it in a
+  post-parse pass when `extensions` is off** (mirrors py-srl's `ExtensionError`).
+
+### X3 — AST representation
+- **Where:** `packages/srl-engine/src/srl/ast.ts` (`buildAST` CST-visitor + new
+  type); `RuleSet` (`ast.ts:118`); export from `index.ts`.
+- **What:** mirror py-srl's `TargetedRule(rule, focusVar, shape, direction)` —
+  **wrap, don't subclass** `Rule`, so all existing rule machinery runs on
+  `.rule`. Keep targeted rules separate from spec-pure rules (py-srl uses
+  `RuleSet.targeted_rules` vs `RuleSet.rules`); add the analogous field to the TS
+  `RuleSet` and export the new type from the barrel.
+
+### X4 — Executor: seed + shapes-graph plumbing + stratifier gate
+- **Where:** `packages/srl-engine/src/rules/executor.ts` (`executeRules`,
+  `executor.ts:238`; `ExecutorOptions`); `stratifier.ts` (`stratifyRules`,
+  `stratifier.ts:275`).
+- **What (eval):** for each targeted rule — `loadShape` → `focusNodes(shape)` →
+  keep those that `conforms` → seed `{focusVar ↦ node}` as the body's initial
+  solution mapping → run the wrapped rule once per conforming node. Plumb the
+  shapes graph in via a new `ExecutorOptions` field (decide: separate N3 `Store`,
+  or Turtle string parsed internally).
+- **What (stratify):** add a **closed** gate edge (same class as NOT/SET/blank-node
+  deps) from each targeted rule to any rule whose head can assert a predicate the
+  shape *reads* (its target predicates + its constraints' predicates — py-srl's
+  `shape_referenced_predicates`). Places the targeted rule strictly above those
+  rules, so `F(shape)` is frozen for the targeted stratum (this is what secures
+  termination without needing monotone `conforms`). A cyclic shape-gate
+  dependency throws the existing closed-cycle error (`StratificationError`).
+
+### X5 — Validator: well-formedness basis + gating
+- **Where:** `packages/srl-engine/src/validation/validator.ts`
+  (`checkAstSemantics`, `validator.ts:306`; `validateSRL`, `validator.ts:335`).
+- **What:** validate the wrapped rule with initial bound-variable set
+  `V₀ = { focusVar }` (the focus var is bound at seed time) — every other §4.2
+  condition is unchanged (base case is `V₀ = ∅`). Surface the extensions-off
+  rejection and any shape-load / unsupported-feature errors as validation
+  messages. Needs the same shapes-graph input as the executor (X4).
+
+### X6 — Extensions gating flag (off by default)
+- **What:** thread an `extensions` boolean through the public parse / validate /
+  execute API, defaulting **false**, so a spec-conformant document is unaffected
+  and the `FOR` clause is only reachable when explicitly enabled. Mirrors
+  py-srl's `extensions=True`. This is the cross-cutting concern that X2, X4, X5
+  all consult.
+
+### X7 — RDF/SRL surface + Monaco (defer / out-of-engine)
+- **RDF surface:** py-srl also accepts the attachment from an RDF shapes graph in
+  both directions (`srl:targetShape` + `srl:focusVar` for rule→shape;
+  `sh:rule`/`srl:rule` for shape→rule), normalizing both to one AST. srl-engine
+  has no RDF-SRL parser today; defer this surface — the text-SRL `FOR` clause is
+  the minimal first step.
+- **Monaco:** highlighting/hover/completion for `FOR`/`IN` lives in
+  `apps/playground/src/lib/monaco/srl-language.ts` and a shapes-graph editor is a
+  playground UI concern — **out of the srl-engine package's scope**, tracked
+  separately if/when the playground exposes the extension.
+
+---
+
 ## 🐞 Pre-existing edge cases (Turtle-leniency negatives)
 
 ### E1 — Lenient lexer accepts some malformed negative fixtures
@@ -183,3 +319,5 @@ any one means touching the full syntax stack: `tokens.ts` → `parser.ts` →
 - **PR #2 description** — B2, B3, P1 called out under "backlog surfaced".
 - **Test skip-list** `packages/srl-engine/test/fixtures.test.ts`
   (`KNOWN_DIVERGENT`) — F1–F6, E1, B2, B3 with per-fixture reasons.
+- **`FOR ?v IN <shape>` spec + reference impl** `../py-srl/docs/for-in-shape-clause.md`
+  — X1–X7 (clause semantics, SHACL-Core subset, stratification gate).
