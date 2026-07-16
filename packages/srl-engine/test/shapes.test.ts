@@ -197,12 +197,26 @@ describe('checkConstraint: value/cardinality/range/string', () => {
     expect(conforms(namedNode('http://example.org/B'), shape, dataStore, shapesStore)).toBe(false);
   });
 
-  it('nodeKind sh:IRI, hasValue, in, maxCount, pattern', () => {
+  it('nodeKind sh:IRI, maxCount, pattern', () => {
     const shapes = SH_PFX + `ex:S a sh:NodeShape ;
       sh:property [ sh:path ex:knows ; sh:nodeKind sh:IRI ; sh:maxCount 2 ] ;
       sh:property [ sh:path ex:code ; sh:pattern "^[A-Z]+$" ] .`;
     const data = `@prefix ex: <http://example.org/> .\nex:A ex:knows ex:B ; ex:code "ABC" .`;
     const { shape, dataStore, shapesStore } = dataAndShape(shapes, data, 'http://example.org/S');
     expect(conforms(namedNode('http://example.org/A'), shape, dataStore, shapesStore)).toBe(true);
+  });
+
+  it('hasValue + in', () => {
+    const shapes = SH_PFX + `ex:S a sh:NodeShape ;
+      sh:property [ sh:path ex:role ; sh:hasValue ex:admin ] ;
+      sh:property [ sh:path ex:color ; sh:in ( ex:red ex:green ) ] .`;
+    const data = `@prefix ex: <http://example.org/> .
+ex:Good ex:role ex:admin ; ex:color ex:red .
+ex:BadRole ex:role ex:guest ; ex:color ex:red .
+ex:BadColor ex:role ex:admin ; ex:color ex:blue .`;
+    const { shape, dataStore, shapesStore } = dataAndShape(shapes, data, 'http://example.org/S');
+    expect(conforms(namedNode('http://example.org/Good'), shape, dataStore, shapesStore)).toBe(true);
+    expect(conforms(namedNode('http://example.org/BadRole'), shape, dataStore, shapesStore)).toBe(false);
+    expect(conforms(namedNode('http://example.org/BadColor'), shape, dataStore, shapesStore)).toBe(false);
   });
 });
