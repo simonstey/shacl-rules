@@ -34,15 +34,18 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Build
-        run: npm run build
+      - name: Build engine
+        run: npm -w srl-engine run build
+
+      - name: Build playground
+        run: npm -w playground run build
         env:
           NEXT_PUBLIC_BASE_PATH: /shacl-rules
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: ./out
+          path: ./apps/playground/out
 
   deploy:
     environment:
