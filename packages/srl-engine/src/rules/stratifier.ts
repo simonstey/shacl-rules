@@ -349,45 +349,60 @@ export function stratifyRules(
 
   const edges = buildDependencyGraph(rules);
 
-  // Targeted rules occupy vertices n..n+m-1.
+  // Targeted rules occupy vertices n..n+m-1 (extension: rule-to-shape targeting).
   if (m > 0) {
-    for (let t = 0; t < m; t++) {
-      const tvertex = n + t;
-      const tr = targetedRules[t];
+    // (vertex id, wrapped Rule) for every vertex — plain and targeted.
+    const allVertices: Array<{ vertex: number; rule: Rule }> = [];
+    for (let i = 0; i < n; i++) allVertices.push({ vertex: i, rule: rules[i] });
+    for (let t = 0; t < m; t++) allVertices.push({ vertex: n + t, rule: targetedRules[t].rule });
 
-      // Body dependencies of the wrapped rule on plain rules.
-      const bodyDeps = bodyPatternDependencies(tr.rule);
-      const forceClosed = hasAssignment(tr.rule) || headHasBlankNode(tr.rule);
+    // Add body-pattern dependency edges from srcVertex to every OTHER vertex
+    // whose head the pattern could match (open/closed as usual).
+    const addBodyDeps = (srcVertex: number, srcRule: Rule): void => {
+      const bodyDeps = bodyPatternDependencies(srcRule);
+      const forceClosed = hasAssignment(srcRule) || headHasBlankNode(srcRule);
       for (const { pattern, label } of bodyDeps) {
         const lbl: EdgeLabel = forceClosed ? CLOSED : label;
-        for (let j = 0; j < n; j++) {
-          if (patternDependsOnRule(pattern, rules[j])) {
-            edges.push({ from: tvertex, to: j, label: lbl });
+        for (const { vertex: vj, rule: rj } of allVertices) {
+          if (vj === srcVertex) continue;
+          if (patternDependsOnRule(pattern, rj)) {
+            edges.push({ from: srcVertex, to: vj, label: lbl });
           }
         }
       }
+    };
 
-      // Gate edges: CLOSED from this targeted rule to any plain rule whose
-      // head asserts a predicate the shape reads (or whose head predicate is a
-      // variable, which could match anything).
-      if (shapesStore) {
-        const shape = loadShape(shapesStore, termForShape(tr.shape));
-        const refs = shapeReferencedPredicates(shape);
-        if (refs.size) {
-          for (let j = 0; j < n; j++) {
-            const { iris, hasVar } = headPredicateIris(rules[j]);
-            if (hasVar || [...iris].some(iri => refs.has(iri))) {
-              edges.push({ from: tvertex, to: j, label: CLOSED });
-            }
+    // (1) Targeted rules' bodies may depend on any (plain or targeted) head.
+    for (let t = 0; t < m; t++) addBodyDeps(n + t, targetedRules[t].rule);
+
+    // (2) Plain rules' bodies may depend on targeted-rule heads (the plain-only
+    // buildDependencyGraph above did not see targeted vertices).
+    for (let i = 0; i < n; i++) {
+      const bodyDeps = bodyPatternDependencies(rules[i]);
+      const forceClosed = hasAssignment(rules[i]) || headHasBlankNode(rules[i]);
+      for (const { pattern, label } of bodyDeps) {
+        const lbl: EdgeLabel = forceClosed ? CLOSED : label;
+        for (let t = 0; t < m; t++) {
+          if (patternDependsOnRule(pattern, targetedRules[t].rule)) {
+            edges.push({ from: i, to: n + t, label: lbl });
           }
-          // Gate edges between targeted rules (in case one targeted rule feeds
-          // a predicate another targeted rule's shape reads).
-          for (let t2 = 0; t2 < m; t2++) {
-            if (t2 === t) continue;
-            const { iris, hasVar } = headPredicateIris(targetedRules[t2].rule);
-            if (hasVar || [...iris].some(iri => refs.has(iri))) {
-              edges.push({ from: tvertex, to: n + t2, label: CLOSED });
-            }
+        }
+      }
+    }
+
+    // (3) Gate: CLOSED edge from each targeted rule to any vertex whose head can
+    // assert a predicate its shape reads (places the targeted rule strictly above
+    // any rule that could change its shape's conformance verdict).
+    if (shapesStore) {
+      for (let t = 0; t < m; t++) {
+        const shape = loadShape(shapesStore, termForShape(targetedRules[t].shape));
+        const refs = shapeReferencedPredicates(shape);
+        if (!refs.size) continue;
+        for (const { vertex: vj, rule: rj } of allVertices) {
+          if (vj === n + t) continue;
+          const { iris, hasVar } = headPredicateIris(rj);
+          if (hasVar || [...iris].some(iri => refs.has(iri))) {
+            edges.push({ from: n + t, to: vj, label: CLOSED });
           }
         }
       }
