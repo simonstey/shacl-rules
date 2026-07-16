@@ -51,7 +51,6 @@ export interface ExecutionResult {
 
 export interface ExecutorOptions {
   maxIterations?: number;
-  includeBaseTriples?: boolean;
   extensions?: boolean;
   shapesGraph?: string;
   shapesStore?: Store;
@@ -59,7 +58,6 @@ export interface ExecutorOptions {
 
 const DEFAULT_OPTIONS: ExecutorOptions = {
   maxIterations: 100,
-  includeBaseTriples: false,
 };
 
 export function expandDeclarations(declarations: Declaration[], prefixes: Map<string, string>): Rule[] {

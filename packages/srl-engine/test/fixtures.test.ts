@@ -102,16 +102,6 @@ const KNOWN_DIVERGENT: Record<string, string> = {
   // ── Non-RDF-1.2 engine/harness divergences (see task-6-report.md concerns).
   //    NOT regressions (extraction is a verified pure rename) and NOT deferred
   //    RDF-1.2 constructs — pre-existing engine strictness / harness overlap.
-  // Parser requires a `.` between a triple pattern and a following FILTER
-  // *inside* a NOT block (bodyBasicSeq is dot-separated only); the W3C fixture
-  // omits it. Adding the dot validates cleanly. Pre-existing parser strictness.
-  'syntax/syntax-rule-elements-filter-03.srl': 'Parser: NOT-body requires `.` before inline FILTER (stricter than spec grammar) — pre-existing, not a regression',
-  // Positive well-formedness fixtures that are well-formed per §4.2 but
-  // non-stratifiable (self-referential rule with SET → closed self-edge).
-  // validateSRL bundles the stratification check, so it rejects them; the W3C
-  // suite tests well-formedness and stratification as separate categories.
-  'wellformed/wellformed-03.srl': 'Well-formed per §4.2 but non-stratifiable (SET self-cycle); validateSRL bundles stratification — harness granularity mismatch, not a regression',
-  'wellformed/wellformed-04.srl': 'Well-formed per §4.2 but non-stratifiable (SET self-cycle + NOT); validateSRL bundles stratification — harness granularity mismatch, not a regression',
 };
 
 interface SyntaxEntry {
@@ -202,7 +192,11 @@ describe('W3C rules syntax / wellformed / stratification fixtures', () => {
       const src = readFileSync(e.file, 'utf8');
       const result = validateSRL(src);
       // Positive → must validate clean; Negative → must produce an error.
-      expect(result.isValid).toBe(e.positive);
+      // Well-formedness fixtures test §4.2 conformance as a SEPARATE category
+      // from stratification (a rule set can be well-formed yet non-stratifiable),
+      // so they read isWellFormed; syntax/stratification fixtures read isValid.
+      const verdict = e.kind === 'wellformed' ? result.isWellFormed : result.isValid;
+      expect(verdict).toBe(e.positive);
     });
   }
 });

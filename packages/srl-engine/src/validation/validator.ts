@@ -39,12 +39,26 @@ export interface ValidationMessage {
   startColumn: number;
   endLine: number;
   endColumn: number;
+  /**
+   * Distinguishes stratification errors from §4.2 well-formedness errors.
+   * The W3C suite treats these as separate categories: a rule set can be
+   * well-formed per §4.2 yet non-stratifiable. Absent ⇒ a well-formedness
+   * (or lexer/parser/prefix) message.
+   */
+  category?: 'stratification';
 }
 
 export interface ValidationResult {
   messages: ValidationMessage[];
   parseTime: number;
+  /** True when there are no error messages of ANY kind (the playground run-gate). */
   isValid: boolean;
+  /**
+   * True when there are no §4.2 well-formedness (or lexer/parser) errors —
+   * IGNORING stratification. A rule set can be well-formed but non-stratifiable;
+   * consumers wanting §4.2 conformance independently of runnability read this.
+   */
+  isWellFormed: boolean;
 }
 
 export interface WorkerMessage {
@@ -333,7 +347,7 @@ function checkAstSemantics(ruleSet: RuleSet, shapesStore?: Store): ValidationMes
   const allRules = [...ruleSet.rules, ...expanded];
   const strat = isStratifiable(allRules, ruleSet.targetedRules, shapesStore);
   if (!strat.stratifiable) {
-    messages.push(locToMessage('error', strat.reason ?? 'Rule set is not stratifiable'));
+    messages.push({ ...locToMessage('error', strat.reason ?? 'Rule set is not stratifiable'), category: 'stratification' });
   }
 
   return messages;
@@ -425,9 +439,12 @@ export function validateSRL(
 
   const parseTime = performance.now() - startTime;
 
+  const errors = messages.filter((m) => m.type === 'error');
   return {
     messages,
     parseTime,
-    isValid: messages.filter((m) => m.type === 'error').length === 0,
+    isValid: errors.length === 0,
+    // Well-formedness ignores stratification (the W3C suite's separate category).
+    isWellFormed: errors.every((m) => m.category === 'stratification'),
   };
 }
