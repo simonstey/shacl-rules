@@ -438,6 +438,11 @@ export function stratifyRules(
 /**
  * Check whether a rule set is stratifiable without throwing. Returns a reason
  * when the stratification condition is violated (used by the validator).
+ *
+ * When `targetedRules` and `shapesStore` are supplied, the opt-in targeting
+ * gate is included (mirroring the executor), so a closed cycle involving a
+ * shape-targeting gate edge is reported at validation time rather than only
+ * surfacing as an execution error.
  */
 export function isStratifiable(
   rules: Rule[],

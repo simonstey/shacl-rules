@@ -305,7 +305,7 @@ function checkRuleWellFormedness(rule: Rule, messages: ValidationMessage[], v0: 
 
 // AST-driven semantic checks: rule well-formedness, ground DATA blocks, and the
 // stratification condition. Runs only when the parse produced a clean CST.
-function checkAstSemantics(ruleSet: RuleSet, shapesStore?: import('n3').Store): ValidationMessage[] {
+function checkAstSemantics(ruleSet: RuleSet, shapesStore?: Store): ValidationMessage[] {
   const messages: ValidationMessage[] = [];
 
   for (const rule of ruleSet.rules) {
