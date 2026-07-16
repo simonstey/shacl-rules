@@ -1,5 +1,43 @@
 import { describe, it, expect } from 'vitest';
 import { SRLLexer, parseSRL, buildAST, ExtensionError } from '../src/index';
+import { Store, Parser, DataFactory } from 'n3';
+import { rdfList, pyValue, termKey, localName, SH } from '../src/shapes/rdf-helpers';
+
+const { namedNode, literal } = DataFactory;
+
+function storeFrom(ttl: string): Store {
+  const s = new Store();
+  s.addQuads(new Parser().parse(ttl));
+  return s;
+}
+
+describe('rdf-helpers', () => {
+  it('reads an RDF list in order', () => {
+    const store = storeFrom(`@prefix ex: <http://example.org/> .
+ex:s ex:list ( ex:a ex:b ex:c ) .`);
+    const listHead = store.getQuads(namedNode('http://example.org/s'), namedNode('http://example.org/list'), null, null)[0].object;
+    const members = rdfList(store, listHead).map(t => t.value);
+    expect(members).toEqual(['http://example.org/a', 'http://example.org/b', 'http://example.org/c']);
+  });
+
+  it('returns [] for a non-list node', () => {
+    const store = storeFrom(`@prefix ex: <http://example.org/> .\nex:s ex:p ex:o .`);
+    expect(rdfList(store, namedNode('http://example.org/o'))).toEqual([]);
+  });
+
+  it('coerces xsd:integer literals to numbers', () => {
+    expect(pyValue(literal('30', namedNode('http://www.w3.org/2001/XMLSchema#integer')))).toBe(30);
+  });
+
+  it('gives value-based term keys', () => {
+    expect(termKey(namedNode('http://example.org/x'))).toBe(termKey(namedNode('http://example.org/x')));
+  });
+
+  it('extracts SHACL local names', () => {
+    expect(localName(`${SH}minCount`)).toBe('minCount');
+    expect(localName('http://example.org/x')).toBeNull();
+  });
+});
 
 describe('FOR token', () => {
   it('lexes FOR as a keyword token, not an identifier', () => {
