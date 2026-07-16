@@ -1,3 +1,7 @@
+> **Monorepo note:** this is the playground app. The SRL parser/validator/engine
+> lives in the sibling package [`srl-engine`](../../packages/srl-engine/) and is
+> imported as `srl-engine`. See the repo-root `RELEASING.md` for publishing.
+
 <div align="center">
 
 # SHACL Rules Playground
