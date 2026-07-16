@@ -146,6 +146,7 @@ ex:S a sh:NodeShape ; sh:closed true .`);
   });
 });
 
+import { conforms } from '../src/shapes/validate';
 import { focusNodes } from '../src/shapes/targets';
 
 describe('focusNodes', () => {
@@ -167,5 +168,41 @@ ex:S a sh:NodeShape ; sh:targetClass ex:Animal .`);
 ex:Dog rdfs:subClassOf ex:Animal . ex:Rex a ex:Dog .`);
     const shape = loadShape(shapesStore, namedNode('http://example.org/S'));
     expect(focusNodes(shape, dataStore, shapesStore).map(t => t.value)).toContain('http://example.org/Rex');
+  });
+});
+
+function dataAndShape(shapesTtl: string, dataTtl: string, shapeIri: string) {
+  const shapesStore = storeFrom(shapesTtl);
+  const dataStore = storeFrom(dataTtl);
+  const shape = loadShape(shapesStore, namedNode(shapeIri));
+  return { shape, dataStore, shapesStore };
+}
+
+describe('checkConstraint: value/cardinality/range/string', () => {
+  const SH_PFX = '@prefix sh: <http://www.w3.org/ns/shacl#> .\n@prefix ex: <http://example.org/> .\n@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .\n';
+
+  it('minInclusive + minCount: Alice (30) conforms, Bob (10) fails', () => {
+    const shapes = SH_PFX + `ex:S a sh:NodeShape ; sh:property [ sh:path ex:age ; sh:minCount 1 ; sh:minInclusive 18 ] .`;
+    const data = `@prefix ex: <http://example.org/> .\nex:Alice ex:age 30 . ex:Bob ex:age 10 .`;
+    const { shape, dataStore, shapesStore } = dataAndShape(shapes, data, 'http://example.org/S');
+    expect(conforms(namedNode('http://example.org/Alice'), shape, dataStore, shapesStore)).toBe(true);
+    expect(conforms(namedNode('http://example.org/Bob'), shape, dataStore, shapesStore)).toBe(false);
+  });
+
+  it('datatype: string value conforms, integer fails', () => {
+    const shapes = SH_PFX + `ex:S a sh:NodeShape ; sh:property [ sh:path ex:name ; sh:datatype xsd:string ] .`;
+    const data = `@prefix ex: <http://example.org/> .\nex:A ex:name "hi" . ex:B ex:name 5 .`;
+    const { shape, dataStore, shapesStore } = dataAndShape(shapes, data, 'http://example.org/S');
+    expect(conforms(namedNode('http://example.org/A'), shape, dataStore, shapesStore)).toBe(true);
+    expect(conforms(namedNode('http://example.org/B'), shape, dataStore, shapesStore)).toBe(false);
+  });
+
+  it('nodeKind sh:IRI, hasValue, in, maxCount, pattern', () => {
+    const shapes = SH_PFX + `ex:S a sh:NodeShape ;
+      sh:property [ sh:path ex:knows ; sh:nodeKind sh:IRI ; sh:maxCount 2 ] ;
+      sh:property [ sh:path ex:code ; sh:pattern "^[A-Z]+$" ] .`;
+    const data = `@prefix ex: <http://example.org/> .\nex:A ex:knows ex:B ; ex:code "ABC" .`;
+    const { shape, dataStore, shapesStore } = dataAndShape(shapes, data, 'http://example.org/S');
+    expect(conforms(namedNode('http://example.org/A'), shape, dataStore, shapesStore)).toBe(true);
   });
 });
