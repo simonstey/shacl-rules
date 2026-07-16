@@ -51,12 +51,24 @@ for (const t of result.inferredTriples) {
 All AST, result, and validation types are exported. See `src/index.ts` for the
 complete surface.
 
+## Learn more
+
+- **[How-To Guide](docs/GUIDE.md)** — the full pipeline (validate → build →
+  execute), semantics, an SRL cheat-sheet, recipes, and gotchas.
+- **[Examples](examples/)** — six runnable scripts (`node examples/01-….mjs`),
+  from basic inference to provenance.
+- **[Publishing](PUBLISHING.md)** — step-by-step npm release procedure.
+- **[Backlog](../../docs/BACKLOG.md)** — known bugs, deferred features, and
+  release follow-ups.
+
 ## Scope
 
 Implements the current W3C SHACL 1.2 Rules surface syntax and semantics.
 **Deferred:** RDF-1.2 rich terms (reification `<< >>`/`<<( )>>`, collections
 `( )`/`[ ]`, annotations `{| |}`) and extended property paths (`*`/`+`/`?`/`|`,
-negated property sets). Built-ins are restricted to the spec `[121]` set.
+negated property sets). Built-ins are restricted to the spec `[121]` set. The
+complete list of deferred features and known issues lives in
+[`docs/BACKLOG.md`](../../docs/BACKLOG.md).
 
 ## Development
 

@@ -4,6 +4,11 @@ Manual, deliberately-not-automated steps. The package is publish-*ready*
 (build config + `files` field are in place); everything below is a conscious
 manual action.
 
+> **For the full step-by-step publish walkthrough** (one-time setup, pre-flight,
+> manifest hardening, dry-run, versioning, verify, post-publish, unpublish),
+> see [`packages/srl-engine/PUBLISHING.md`](packages/srl-engine/PUBLISHING.md).
+> This section is the condensed reference.
+
 ## 1. Publish to npm
 
 Prerequisites: an npm account with publish rights to the (unscoped) name
