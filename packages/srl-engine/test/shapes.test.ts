@@ -219,6 +219,32 @@ ex:BadColor ex:role ex:admin ; ex:color ex:blue .`;
     expect(conforms(namedNode('http://example.org/BadRole'), shape, dataStore, shapesStore)).toBe(false);
     expect(conforms(namedNode('http://example.org/BadColor'), shape, dataStore, shapesStore)).toBe(false);
   });
+
+  it('maxCount dedups value nodes of a converging sequence path (SHACL set semantics)', () => {
+    // ex:a/ex:b from root reaches ex:z via TWO intermediates (ex:x, ex:y). Value
+    // nodes are a SET → {ex:z}, count 1, so maxCount 1 must CONFORM. Without dedup
+    // the path yields [ex:z, ex:z] (count 2) and wrongly fails.
+    const shapes = SH_PFX + `ex:S a sh:NodeShape ; sh:targetNode ex:root ;
+      sh:property [ sh:path ( ex:a ex:b ) ; sh:maxCount 1 ] .`;
+    const data = `@prefix ex: <http://example.org/> .
+ex:root ex:a ex:x , ex:y .
+ex:x ex:b ex:z .
+ex:y ex:b ex:z .`;
+    const { shape, dataStore, shapesStore } = dataAndShape(shapes, data, 'http://example.org/S');
+    expect(conforms(namedNode('http://example.org/root'), shape, dataStore, shapesStore)).toBe(true);
+  });
+
+  it('minInclusive over xsd:date compares chronologically, not as strings', () => {
+    const shapes = SH_PFX + `ex:S a sh:NodeShape ;
+      sh:property [ sh:path ex:birthDate ; sh:minInclusive "2000-01-01"^^xsd:date ] .`;
+    const data = `@prefix ex: <http://example.org/> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+ex:Alice ex:birthDate "2005-06-01"^^xsd:date .
+ex:Bob   ex:birthDate "1990-03-15"^^xsd:date .`;
+    const { shape, dataStore, shapesStore } = dataAndShape(shapes, data, 'http://example.org/S');
+    expect(conforms(namedNode('http://example.org/Alice'), shape, dataStore, shapesStore)).toBe(true);  // 2005 ≥ 2000
+    expect(conforms(namedNode('http://example.org/Bob'), shape, dataStore, shapesStore)).toBe(false);   // 1990 < 2000
+  });
 });
 
 describe('checkConstraint: list family + language', () => {
