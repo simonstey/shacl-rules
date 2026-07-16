@@ -61,7 +61,9 @@ export {
   isRunOnce,
   hasAssignment,
   headHasBlankNode,
+  shapeReferencedPredicates,
   type StratifiedRule,
+  type StratifiedTargetedRule,
   type StratificationLayer,
   type StratificationCheck,
 } from './rules/stratifier';
