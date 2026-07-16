@@ -16,7 +16,11 @@ export function useValidation() {
     setIsValidating(true);
 
     debounceRef.current = setTimeout(() => {
-      const validationResult = validateSRL(code);
+      // extensions:true lets FOR clauses validate as well-formed. The shapes
+      // graph is intentionally NOT passed: SRL well-formedness is AST-only, so
+      // feeding it here would be dead wiring and would re-validate on every
+      // shapes-editor keystroke for no benefit.
+      const validationResult = validateSRL(code, { extensions: true });
       setResult(validationResult);
       setIsValidating(false);
     }, DEBOUNCE_DELAY);

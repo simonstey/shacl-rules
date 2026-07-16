@@ -11,6 +11,12 @@ interface RDFEditorProps {
   theme?: 'light' | 'dark';
   readOnly?: boolean;
   language?: 'turtle' | 'json';
+  /**
+   * Monaco model path. Distinct paths give each logical document its own model,
+   * undo stack, and view state — so sharing one editor instance across tabs does
+   * not let an undo bleed one document's content into another.
+   */
+  path?: string;
 }
 
 export function RDFEditor({
@@ -19,6 +25,7 @@ export function RDFEditor({
   theme = 'dark',
   readOnly = false,
   language = 'turtle',
+  path,
 }: RDFEditorProps) {
   // Share the same custom themes as the SRL editor. Monaco's active theme is
   // global, so both editors must reference identical theme names or they fight.
@@ -112,6 +119,7 @@ export function RDFEditor({
   return (
     <Editor
       height="100%"
+      path={path}
       language={language === 'turtle' ? 'turtle' : 'json'}
       value={value}
       onChange={handleChange}

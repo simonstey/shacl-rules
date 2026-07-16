@@ -8,7 +8,7 @@ export interface UseRuleExecutionResult {
   ruleSet: RuleSet | null;
   isExecuting: boolean;
   error: string | null;
-  execute: (srlCode: string, rdfData: string) => void;
+  execute: (srlCode: string, rdfData: string, shapesGraph?: string) => void;
   reset: () => void;
 }
 
@@ -20,23 +20,25 @@ export function useRuleExecution(): UseRuleExecutionResult {
   
   const executionIdRef = useRef(0);
   
-  const execute = useCallback((srlCode: string, rdfData: string) => {
+  const execute = useCallback((srlCode: string, rdfData: string, shapesGraph?: string) => {
     const executionId = ++executionIdRef.current;
-    
+
     setIsExecuting(true);
     setError(null);
-    
+
     setTimeout(() => {
       if (executionId !== executionIdRef.current) {
         return;
       }
-      
+
       try {
-        const parsedRuleSet = buildAST(srlCode);
+        const parsedRuleSet = buildAST(srlCode, { extensions: true });
         setRuleSet(parsedRuleSet);
-        
+
         const executionResult = executeRules(parsedRuleSet, rdfData, {
           maxIterations: 100,
+          extensions: true,
+          shapesGraph,
         });
         
         if (executionId === executionIdRef.current) {

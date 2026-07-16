@@ -57,6 +57,7 @@ export const srlMonarchTokensProvider: MonacoEditor.languages.IMonarchLanguage =
       "NOT",
       "SET",
       "IN",
+      "FOR",
       "TRANSITIVE",
       "SYMMETRIC",
       "INVERSE",
@@ -568,6 +569,12 @@ export function registerSRLLanguage(monaco: Monaco) {
           description: "Tests if a value is in a list of values.",
           syntax: "?var IN (value1, value2, ...)",
         },
+        FOR: {
+          title: "Shape Targeting",
+          description:
+            "Targets a rule to a SHACL shape (opt-in extension). The rule fires once per focus node that conforms to the shape, with the focus variable pre-bound.",
+          syntax: "RULE iri? FOR ?var IN <shape> { … } WHERE { … }",
+        },
         TRANSITIVE: {
           title: "Transitive Property",
           description:
@@ -699,6 +706,7 @@ export function registerSRLLanguage(monaco: Monaco) {
         "SET",
         "NOT",
         "IN",
+        "FOR",
         "TRANSITIVE",
         "SYMMETRIC",
         "INVERSE",
@@ -864,6 +872,15 @@ export function registerSRLLanguage(monaco: Monaco) {
           insertTextRules:
             monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
           documentation: "Test if a value is in a list",
+          range,
+        },
+        {
+          label: "FOR ... IN shape (targeting)",
+          kind: monaco.languages.CompletionItemKind.Snippet,
+          insertText: "FOR ?${1:this} IN ${2:ex:Shape}",
+          insertTextRules:
+            monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+          documentation: "Shape-targeting clause (opt-in extension)",
           range,
         },
         {

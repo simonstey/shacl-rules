@@ -5,6 +5,8 @@ export interface Example {
   category: ExampleCategory;
   srlCode: string;
   rdfData?: string;
+  /** SHACL shapes graph (Turtle) for FOR ?v IN <shape> examples (opt-in extension). */
+  shapesGraph?: string;
 }
 
 export type ExampleCategory =
@@ -14,7 +16,8 @@ export type ExampleCategory =
   | 'negation'
   | 'assignment'
   | 'path-expressions'
-  | 'string-functions';
+  | 'string-functions'
+  | 'shape-targeting';
 
 export const exampleCategories: Record<ExampleCategory, { name: string; description: string }> = {
   'basic-inference': {
@@ -44,6 +47,10 @@ export const exampleCategories: Record<ExampleCategory, { name: string; descript
   'string-functions': {
     name: 'String & Value Functions',
     description: 'Built-in functions for string and value manipulation',
+  },
+  'shape-targeting': {
+    name: 'Shape Targeting (FOR … IN)',
+    description: "Rules tied to a SHACL shape — fire only for the shape's conforming focus nodes (opt-in extension)",
   },
 };
 
@@ -548,6 +555,225 @@ RULE { ?item :labelEn ?label } WHERE {
 
 :item1 :quantityStr "42" .
 :product1 :rawLabel "Widget" .`,
+  },
+
+  // Shape Targeting Examples (opt-in FOR ?v IN <shape> extension)
+  {
+    id: 'adult-gate',
+    title: 'Adult Status Gate',
+    description: 'Fire only for ex:Person nodes conforming to AdultShape (age ≥ 18)',
+    category: 'shape-targeting',
+    srlCode: `PREFIX ex: <http://example.org/>
+
+# Fires once per conforming focus node, with ?this pre-bound.
+RULE ex:adultStatus FOR ?this IN ex:AdultShape
+  { ?this ex:status ex:adult }
+WHERE
+  { ?this ex:age ?a }`,
+    rdfData: `@prefix ex:  <http://example.org/> .
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+
+ex:Alice rdf:type ex:Person ; ex:age 30 .
+ex:Bob   rdf:type ex:Person ; ex:age 10 .`,
+    shapesGraph: `@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix ex: <http://example.org/> .
+
+# Alice (30) conforms; Bob (10) fails sh:minInclusive.
+ex:AdultShape a sh:NodeShape ;
+  sh:targetClass ex:Person ;
+  sh:property [ sh:path ex:age ; sh:minCount 1 ; sh:minInclusive 18 ] .`,
+  },
+  {
+    id: 'target-kinds',
+    title: 'Target: SubjectsOf',
+    description: 'sh:targetSubjectsOf selects the subjects of a given predicate',
+    category: 'shape-targeting',
+    srlCode: `PREFIX ex: <http://example.org/>
+
+# ex:AuthorShape targets subjects of ex:wrote — everyone who wrote something.
+RULE ex:markAuthor FOR ?p IN ex:AuthorShape
+  { ?p ex:role ex:author }
+WHERE
+  { ?p ex:wrote ?work }`,
+    rdfData: `@prefix ex: <http://example.org/> .
+
+ex:Ada ex:wrote ex:Notes .
+ex:Grace ex:wrote ex:Compiler .
+ex:Reader ex:read ex:Notes .`,
+    shapesGraph: `@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix ex: <http://example.org/> .
+
+# Focus nodes = subjects of any ex:wrote triple.
+ex:AuthorShape a sh:NodeShape ;
+  sh:targetSubjectsOf ex:wrote .`,
+  },
+  {
+    id: 'datatype-nodekind-gate',
+    title: 'Datatype & NodeKind Gate',
+    description: 'Conform only when a property has the required datatype / node kind',
+    category: 'shape-targeting',
+    srlCode: `PREFIX ex: <http://example.org/>
+
+# Fires only for products whose ex:sku is an IRI and ex:name is a string.
+RULE ex:validProduct FOR ?p IN ex:ProductShape
+  { ?p ex:status ex:valid }
+WHERE
+  { ?p ex:name ?n }`,
+    rdfData: `@prefix ex:  <http://example.org/> .
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+
+ex:Widget rdf:type ex:Product ; ex:name "Widget" ; ex:sku ex:SKU-1 .
+ex:Gadget rdf:type ex:Product ; ex:name 42 ; ex:sku ex:SKU-2 .`,
+    shapesGraph: `@prefix sh:  <http://www.w3.org/ns/shacl#> .
+@prefix ex:  <http://example.org/> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+# Widget conforms; Gadget fails (ex:name 42 is not a string).
+ex:ProductShape a sh:NodeShape ;
+  sh:targetClass ex:Product ;
+  sh:property [ sh:path ex:name ; sh:datatype xsd:string ] ;
+  sh:property [ sh:path ex:sku ; sh:nodeKind sh:IRI ] .`,
+  },
+  {
+    id: 'pattern-in-hasvalue',
+    title: 'Pattern / IN Gate',
+    description: 'Conform via sh:pattern (regex) and sh:in (enumerated values)',
+    category: 'shape-targeting',
+    srlCode: `PREFIX ex: <http://example.org/>
+
+RULE ex:approve FOR ?o IN ex:OrderShape
+  { ?o ex:approved true }
+WHERE
+  { ?o ex:code ?c }`,
+    rdfData: `@prefix ex:  <http://example.org/> .
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+
+ex:o1 rdf:type ex:Order ; ex:code "AB-123" ; ex:region ex:EU .
+ex:o2 rdf:type ex:Order ; ex:code "bad" ; ex:region ex:EU .
+ex:o3 rdf:type ex:Order ; ex:code "CD-456" ; ex:region ex:XX .`,
+    shapesGraph: `@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix ex: <http://example.org/> .
+
+# o1 conforms; o2 fails the pattern; o3 fails the region set.
+ex:OrderShape a sh:NodeShape ;
+  sh:targetClass ex:Order ;
+  sh:property [ sh:path ex:code ; sh:pattern "^[A-Z]{2}-[0-9]+$" ] ;
+  sh:property [ sh:path ex:region ; sh:in ( ex:EU ex:US ) ] .`,
+  },
+  {
+    id: 'cardinality-gate',
+    title: 'Cardinality Gate',
+    description: 'Conform only when a property occurs the required number of times',
+    category: 'shape-targeting',
+    srlCode: `PREFIX ex: <http://example.org/>
+
+# Fires only for teams with 2–3 members.
+RULE ex:validTeam FOR ?t IN ex:TeamShape
+  { ?t ex:status ex:staffed }
+WHERE
+  { ?t ex:member ?m }`,
+    rdfData: `@prefix ex:  <http://example.org/> .
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+
+ex:t1 rdf:type ex:Team ; ex:member ex:a , ex:b .
+ex:t2 rdf:type ex:Team ; ex:member ex:c .
+ex:t3 rdf:type ex:Team ; ex:member ex:d , ex:e , ex:f , ex:g .`,
+    shapesGraph: `@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix ex: <http://example.org/> .
+
+# t1 (2 members) conforms; t2 (1) and t3 (4) fail.
+ex:TeamShape a sh:NodeShape ;
+  sh:targetClass ex:Team ;
+  sh:property [ sh:path ex:member ; sh:minCount 2 ; sh:maxCount 3 ] .`,
+  },
+  {
+    id: 'logical-shapes',
+    title: 'Logical Shapes (or / not)',
+    description: 'Conform via sh:or branches while sh:not excludes a sub-shape',
+    category: 'shape-targeting',
+    srlCode: `PREFIX ex: <http://example.org/>
+
+# Contactable = has an email OR a phone, and is NOT opted out.
+RULE ex:contactable FOR ?p IN ex:ContactableShape
+  { ?p ex:status ex:contactable }
+WHERE
+  { ?p ex:name ?n }`,
+    rdfData: `@prefix ex:  <http://example.org/> .
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+
+ex:Ann rdf:type ex:Person ; ex:name "Ann" ; ex:email "ann@x.org" .
+ex:Ben rdf:type ex:Person ; ex:name "Ben" ; ex:phone "555-0100" ; ex:optOut true .
+ex:Cat rdf:type ex:Person ; ex:name "Cat" .`,
+    shapesGraph: `@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix ex: <http://example.org/> .
+
+# Ann conforms; Ben is opted out (sh:not); Cat has neither email nor phone.
+# Logical operands are node shapes (each wraps a sh:property), since sh:or/sh:not
+# evaluate their operands as node shapes against the focus node.
+ex:ContactableShape a sh:NodeShape ;
+  sh:targetClass ex:Person ;
+  sh:or (
+    [ sh:property [ sh:path ex:email ; sh:minCount 1 ] ]
+    [ sh:property [ sh:path ex:phone ; sh:minCount 1 ] ]
+  ) ;
+  sh:not [ sh:property [ sh:path ex:optOut ; sh:hasValue true ] ] .`,
+  },
+  {
+    id: 'inferred-membership',
+    title: 'Sees Inferred Membership',
+    description: 'A plain rule infers ex:age; the FOR gate reads it in a higher stratum',
+    category: 'shape-targeting',
+    srlCode: `PREFIX ex: <http://example.org/>
+
+# Plain rule: derive age from birth year.
+RULE { ?x ex:age 40 } WHERE { ?x ex:bornYear ?y }
+
+# Targeted rule: gated on AdultShape, which reads ex:age. The stratifier places
+# this ABOVE the plain rule, so the gate sees the inferred age.
+RULE ex:adultStatus FOR ?this IN ex:AdultShape
+  { ?this ex:status ex:adult }
+WHERE
+  { ?this ex:age ?a }`,
+    rdfData: `@prefix ex:  <http://example.org/> .
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+
+# Dana has no age in the data — it is inferred by the plain rule.
+ex:Dana rdf:type ex:Person ; ex:bornYear 1980 .`,
+    shapesGraph: `@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix ex: <http://example.org/> .
+
+ex:AdultShape a sh:NodeShape ;
+  sh:targetClass ex:Person ;
+  sh:property [ sh:path ex:age ; sh:minCount 1 ; sh:minInclusive 18 ] .`,
+  },
+  {
+    id: 'if-then-chained',
+    title: 'IF..THEN + Chained Gates',
+    description: "IF/THEN FOR form; one targeted rule feeds another shape's predicate",
+    category: 'shape-targeting',
+    srlCode: `PREFIX ex: <http://example.org/>
+
+# IF..THEN surface form with a naming IRI + FOR clause.
+IF { ?this ex:bornYear ?y }
+THEN ex:setAge FOR ?this IN ex:PersonShape { ?this ex:age 40 }
+
+# Gated on AdultShape (reads ex:age) — runs after setAge in a higher stratum.
+RULE ex:adultStatus FOR ?this IN ex:AdultShape
+  { ?this ex:status ex:adult }
+WHERE
+  { ?this ex:age ?a }`,
+    rdfData: `@prefix ex:  <http://example.org/> .
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+
+ex:Erin rdf:type ex:Person ; ex:bornYear 1980 .`,
+    shapesGraph: `@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix ex: <http://example.org/> .
+
+ex:PersonShape a sh:NodeShape ; sh:targetClass ex:Person .
+
+ex:AdultShape a sh:NodeShape ;
+  sh:targetClass ex:Person ;
+  sh:property [ sh:path ex:age ; sh:minCount 1 ; sh:minInclusive 18 ] .`,
   },
 ];
 
