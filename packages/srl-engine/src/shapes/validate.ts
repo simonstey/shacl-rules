@@ -83,28 +83,58 @@ function conformsShapeRef(node: Term, ref: Term, dataStore: Store, shapesStore: 
   return conforms(node, loadShape(shapesStore, ref), dataStore, shapesStore, depth + 1);
 }
 
-// SHACL RDF path → value nodes reachable from `node` (IRI / sh:inversePath / list-sequence).
+// The inner path of a sh:inversePath node, or null if `path` is not one.
+function inversePathInner(path: Term, shapesStore: Store): Term | null {
+  if (path.termType === 'NamedNode') return null;
+  const inv = shapesStore.getQuads(path as never, `${SH}inversePath` as never, null, null);
+  return inv.length ? inv[0].object : null;
+}
+
+// SHACL RDF path → value nodes reachable FORWARD from `node`
+// (IRI / sh:inversePath / list-sequence, recursing into nested forms).
 function valueNodesViaPath(node: Term, path: Term, dataStore: Store, shapesStore: Store): Term[] {
   if (path.termType === 'NamedNode') {
     return dataStore.getQuads(node as never, path as never, null, null).map(q => q.object);
   }
-  // sh:inversePath
-  const inv = shapesStore.getQuads(path as never, `${SH}inversePath` as never, null, null);
-  if (inv.length) {
-    const innerPath = inv[0].object;
-    if (innerPath.termType === 'NamedNode') {
-      return dataStore.getQuads(null, innerPath as never, node as never, null).map(q => q.subject);
-    }
-    // Nested inverse/sequence: support IRI inverse only for now.
-    throw new UnsupportedShapeFeatureError('Nested inverse SHACL paths are not supported');
+  const inner = inversePathInner(path, shapesStore);
+  if (inner !== null) {
+    // Forward over inversePath(P) = inverse relation of P.
+    return inverseValueNodesViaPath(node, inner, dataStore, shapesStore);
   }
-  // RDF-list sequence path
+  // RDF-list sequence path: apply each step forward, left to right.
   const members = rdfList(shapesStore, path);
   if (members.length) {
     let current: Term[] = [node];
     for (const step of members) {
       const next: Term[] = [];
       for (const t of current) next.push(...valueNodesViaPath(t, step, dataStore, shapesStore));
+      current = next;
+    }
+    return current;
+  }
+  throw new UnsupportedShapeFeatureError(`Unsupported SHACL property path: ${path.value}`);
+}
+
+// Nodes X such that `node` is reachable FORWARD from X via `path` — i.e. the
+// value nodes of the inverse of `path` from `node`. Mutually recursive with
+// valueNodesViaPath so nested inverse/sequence paths evaluate fully (matches
+// py-srl's bidirectional evaluate_path over InversePath/PathSequence).
+function inverseValueNodesViaPath(node: Term, path: Term, dataStore: Store, shapesStore: Store): Term[] {
+  if (path.termType === 'NamedNode') {
+    return dataStore.getQuads(null, path as never, node as never, null).map(q => q.subject);
+  }
+  const inner = inversePathInner(path, shapesStore);
+  if (inner !== null) {
+    // Inverse of inversePath(P) = forward over P.
+    return valueNodesViaPath(node, inner, dataStore, shapesStore);
+  }
+  // Inverse of a sequence: reverse the step order, inverting each step.
+  const members = rdfList(shapesStore, path);
+  if (members.length) {
+    let current: Term[] = [node];
+    for (let i = members.length - 1; i >= 0; i--) {
+      const next: Term[] = [];
+      for (const t of current) next.push(...inverseValueNodesViaPath(t, members[i], dataStore, shapesStore));
       current = next;
     }
     return current;

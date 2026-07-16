@@ -309,4 +309,26 @@ ex:B a sh:NodeShape ; sh:property [ sh:path ex:b ; sh:minCount 1 ] .`;
     const { shape, dataStore, shapesStore } = dataAndShape(shapes, data, 'http://example.org/S');
     expect(conforms(namedNode('http://example.org/X'), shape, dataStore, shapesStore)).toBe(true);
   });
+
+  it('nested inversePath(inversePath(p)) = forward p (T3 recursion)', () => {
+    // inverse of inverse of ex:parent is forward ex:parent. From ex:Child that
+    // reaches ex:Parent, so ex:Child conforms and ex:Parent does not.
+    const shapes = SH_PFX + `ex:S a sh:NodeShape ;
+      sh:property [ sh:path [ sh:inversePath [ sh:inversePath ex:parent ] ] ; sh:minCount 1 ] .`;
+    const data = `@prefix ex: <http://example.org/> .\nex:Child ex:parent ex:Parent .`;
+    const { shape, dataStore, shapesStore } = dataAndShape(shapes, data, 'http://example.org/S');
+    expect(conforms(namedNode('http://example.org/Child'), shape, dataStore, shapesStore)).toBe(true);
+    expect(conforms(namedNode('http://example.org/Parent'), shape, dataStore, shapesStore)).toBe(false);
+  });
+
+  it('inversePath over a sequence reverses + inverts each step (T3)', () => {
+    // inversePath( ex:a/ex:b ): from Z, step back ex:b to Y, then back ex:a to X.
+    // X --a--> Y --b--> Z, so from Z the path reaches X.
+    const shapes = SH_PFX + `ex:S a sh:NodeShape ;
+      sh:property [ sh:path [ sh:inversePath ( ex:a ex:b ) ] ; sh:minCount 1 ] .`;
+    const data = `@prefix ex: <http://example.org/> .\nex:X ex:a ex:Y . ex:Y ex:b ex:Z .`;
+    const { shape, dataStore, shapesStore } = dataAndShape(shapes, data, 'http://example.org/S');
+    expect(conforms(namedNode('http://example.org/Z'), shape, dataStore, shapesStore)).toBe(true);
+    expect(conforms(namedNode('http://example.org/X'), shape, dataStore, shapesStore)).toBe(false);
+  });
 });
