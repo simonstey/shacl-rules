@@ -1,6 +1,7 @@
 import { parseSRL } from '../srl/parser';
 import { SRLLexer } from '../srl/tokens';
 import { IToken } from 'chevrotain';
+import { Store, Parser as N3Parser } from 'n3';
 import {
   buildAST,
   RuleSet,
@@ -9,7 +10,6 @@ import {
   TriplePattern,
   Expression,
   SourceLocation,
-  TargetedRule,
 } from '../srl/ast';
 import { expandDeclarations } from '../rules/executor';
 import { isStratifiable } from '../rules/stratifier';
@@ -38,12 +38,26 @@ export interface ValidationMessage {
   startColumn: number;
   endLine: number;
   endColumn: number;
+  /**
+   * Distinguishes stratification errors from §4.2 well-formedness errors.
+   * The W3C suite treats these as separate categories: a rule set can be
+   * well-formed per §4.2 yet non-stratifiable. Absent ⇒ a well-formedness
+   * (or lexer/parser/prefix) message.
+   */
+  category?: 'stratification';
 }
 
 export interface ValidationResult {
   messages: ValidationMessage[];
   parseTime: number;
+  /** True when there are no error messages of ANY kind (the playground run-gate). */
   isValid: boolean;
+  /**
+   * True when there are no §4.2 well-formedness (or lexer/parser) errors —
+   * IGNORING stratification. A rule set can be well-formed but non-stratifiable;
+   * consumers wanting §4.2 conformance independently of runnability read this.
+   */
+  isWellFormed: boolean;
 }
 
 export interface WorkerMessage {
@@ -125,6 +139,27 @@ function extractPrefixUsages(
   }
 
   return prefixUsages;
+}
+
+// Two consecutive `.` tokens are an empty statement — never valid Turtle/SRL.
+// The lenient optional-dot grammar accepts them (e.g. `:s :p 1. .`), so catch
+// them off the token stream. A bare `Dot` is only ever a statement separator,
+// so adjacency is an unambiguous error with no false-negative risk on valid input.
+function checkDoubleDot(tokens: IToken[]): ValidationMessage[] {
+  const messages: ValidationMessage[] = [];
+  for (let i = 1; i < tokens.length; i++) {
+    if (tokens[i].tokenType?.name === 'Dot' && tokens[i - 1].tokenType?.name === 'Dot') {
+      messages.push({
+        type: 'error',
+        message: 'Empty statement: two consecutive `.` separators',
+        startLine: tokens[i].startLine ?? 1,
+        startColumn: tokens[i].startColumn ?? 1,
+        endLine: tokens[i].endLine ?? tokens[i].startLine ?? 1,
+        endColumn: (tokens[i].endColumn ?? tokens[i].startColumn ?? 1) + 1,
+      });
+    }
+  }
+  return messages;
 }
 
 // Prefix diagnostics (undefined-prefix warnings, duplicate-prefix notices) run
@@ -304,7 +339,7 @@ function checkRuleWellFormedness(rule: Rule, messages: ValidationMessage[], v0: 
 
 // AST-driven semantic checks: rule well-formedness, ground DATA blocks, and the
 // stratification condition. Runs only when the parse produced a clean CST.
-function checkAstSemantics(ruleSet: RuleSet): ValidationMessage[] {
+function checkAstSemantics(ruleSet: RuleSet, shapesStore?: Store): ValidationMessage[] {
   const messages: ValidationMessage[] = [];
 
   for (const rule of ruleSet.rules) {
@@ -326,11 +361,13 @@ function checkAstSemantics(ruleSet: RuleSet): ValidationMessage[] {
   }
 
   // Stratification: declarations expand to synthetic rules, so check the full set.
+  // Targeted rules (+ their shape-gate edges) must be included, else a targeted-gate
+  // cycle would pass validation but throw at execution (validation is the run gate).
   const expanded = expandDeclarations(ruleSet.declarations, ruleSet.prefixes);
   const allRules = [...ruleSet.rules, ...expanded];
-  const strat = isStratifiable(allRules);
+  const strat = isStratifiable(allRules, ruleSet.targetedRules, shapesStore);
   if (!strat.stratifiable) {
-    messages.push(locToMessage('error', strat.reason ?? 'Rule set is not stratifiable'));
+    messages.push({ ...locToMessage('error', strat.reason ?? 'Rule set is not stratifiable'), category: 'stratification' });
   }
 
   return messages;
@@ -338,7 +375,7 @@ function checkAstSemantics(ruleSet: RuleSet): ValidationMessage[] {
 
 export function validateSRL(
   code: string,
-  options?: { extensions?: boolean; shapesGraph?: string; shapesStore?: import('n3').Store },
+  options?: { extensions?: boolean; shapesGraph?: string; shapesStore?: Store },
 ): ValidationResult {
   const startTime = performance.now();
   const messages: ValidationMessage[] = [];
@@ -379,13 +416,26 @@ export function validateSRL(
     if (lexResult.errors.length === 0 && parseResult.errors.length === 0) {
       const prefixes = extractPrefixes(parseResult.tokens);
       messages.push(...checkPrefixIssues(parseResult.tokens, prefixes));
+      messages.push(...checkDoubleDot(parseResult.tokens));
 
       // AST-based well-formedness + stratification. Guarded so a builder error
       // (e.g. an unsupported-but-parseable construct) degrades to a diagnostic
       // rather than crashing validation.
       try {
         const ruleSet = buildAST(code, { extensions: options?.extensions });
-        messages.push(...checkAstSemantics(ruleSet));
+        // Resolve the shapes graph so the stratification check can see the
+        // targeted-rule gate edges. shapesStore wins; else parse shapesGraph
+        // (a bad shapes graph degrades to no store rather than throwing).
+        let shapesStore: Store | undefined = options?.shapesStore;
+        if (!shapesStore && options?.shapesGraph) {
+          try {
+            shapesStore = new Store();
+            shapesStore.addQuads(new N3Parser().parse(options.shapesGraph));
+          } catch {
+            shapesStore = undefined;
+          }
+        }
+        messages.push(...checkAstSemantics(ruleSet, shapesStore));
       } catch (e) {
         messages.push({
           type: 'error',
@@ -410,9 +460,12 @@ export function validateSRL(
 
   const parseTime = performance.now() - startTime;
 
+  const errors = messages.filter((m) => m.type === 'error');
   return {
     messages,
     parseTime,
-    isValid: messages.filter((m) => m.type === 'error').length === 0,
+    isValid: errors.length === 0,
+    // Well-formedness ignores stratification (the W3C suite's separate category).
+    isWellFormed: errors.every((m) => m.category === 'stratification'),
   };
 }

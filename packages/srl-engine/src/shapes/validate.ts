@@ -37,6 +37,27 @@ const NODEKINDS: Record<string, (t: Term) => boolean> = {
 };
 
 /**
+ * Comparable key for value-range constraints, tagged by family so numbers and
+ * dates are never cross-compared (mirrors py-srl / rdflib, where comparing a
+ * number to a datetime raises TypeError → treated as non-conforming). Numeric
+ * literals map to their JS number; xsd:date / xsd:dateTime map to epoch millis.
+ * Returns null for anything not orderable here (bare strings, xsd:time, etc.),
+ * which the caller treats as non-conforming — same as py-srl's TypeError branch.
+ */
+function rangeKey(term: Term): { fam: 'num' | 'time'; v: number } | null {
+  const p = pyValue(term);
+  if (typeof p === 'number') return { fam: 'num', v: p };
+  if (term.termType === 'Literal') {
+    const dt = (term as Literal).datatype?.value;
+    if (dt === `${XSD}date` || dt === `${XSD}dateTime` || dt === `${XSD}dateTimeStamp`) {
+      const ms = Date.parse(term.value);
+      if (!Number.isNaN(ms)) return { fam: 'time', v: ms };
+    }
+  }
+  return null;
+}
+
+/**
  * Maps SHACL regex flags to JS regex flags.
  * The 'x' (verbose/extended) flag has no JS equivalent and is silently dropped.
  * 'i', 's', 'm' are mapped 1-to-1.
@@ -62,28 +83,58 @@ function conformsShapeRef(node: Term, ref: Term, dataStore: Store, shapesStore: 
   return conforms(node, loadShape(shapesStore, ref), dataStore, shapesStore, depth + 1);
 }
 
-// SHACL RDF path → value nodes reachable from `node` (IRI / sh:inversePath / list-sequence).
+// The inner path of a sh:inversePath node, or null if `path` is not one.
+function inversePathInner(path: Term, shapesStore: Store): Term | null {
+  if (path.termType === 'NamedNode') return null;
+  const inv = shapesStore.getQuads(path as never, `${SH}inversePath` as never, null, null);
+  return inv.length ? inv[0].object : null;
+}
+
+// SHACL RDF path → value nodes reachable FORWARD from `node`
+// (IRI / sh:inversePath / list-sequence, recursing into nested forms).
 function valueNodesViaPath(node: Term, path: Term, dataStore: Store, shapesStore: Store): Term[] {
   if (path.termType === 'NamedNode') {
     return dataStore.getQuads(node as never, path as never, null, null).map(q => q.object);
   }
-  // sh:inversePath
-  const inv = shapesStore.getQuads(path as never, `${SH}inversePath` as never, null, null);
-  if (inv.length) {
-    const innerPath = inv[0].object;
-    if (innerPath.termType === 'NamedNode') {
-      return dataStore.getQuads(null, innerPath as never, node as never, null).map(q => q.subject);
-    }
-    // Nested inverse/sequence: support IRI inverse only for now.
-    throw new UnsupportedShapeFeatureError('Nested inverse SHACL paths are not supported');
+  const inner = inversePathInner(path, shapesStore);
+  if (inner !== null) {
+    // Forward over inversePath(P) = inverse relation of P.
+    return inverseValueNodesViaPath(node, inner, dataStore, shapesStore);
   }
-  // RDF-list sequence path
+  // RDF-list sequence path: apply each step forward, left to right.
   const members = rdfList(shapesStore, path);
   if (members.length) {
     let current: Term[] = [node];
     for (const step of members) {
       const next: Term[] = [];
       for (const t of current) next.push(...valueNodesViaPath(t, step, dataStore, shapesStore));
+      current = next;
+    }
+    return current;
+  }
+  throw new UnsupportedShapeFeatureError(`Unsupported SHACL property path: ${path.value}`);
+}
+
+// Nodes X such that `node` is reachable FORWARD from X via `path` — i.e. the
+// value nodes of the inverse of `path` from `node`. Mutually recursive with
+// valueNodesViaPath so nested inverse/sequence paths evaluate fully (matches
+// py-srl's bidirectional evaluate_path over InversePath/PathSequence).
+function inverseValueNodesViaPath(node: Term, path: Term, dataStore: Store, shapesStore: Store): Term[] {
+  if (path.termType === 'NamedNode') {
+    return dataStore.getQuads(null, path as never, node as never, null).map(q => q.subject);
+  }
+  const inner = inversePathInner(path, shapesStore);
+  if (inner !== null) {
+    // Inverse of inversePath(P) = forward over P.
+    return valueNodesViaPath(node, inner, dataStore, shapesStore);
+  }
+  // Inverse of a sequence: reverse the step order, inverting each step.
+  const members = rdfList(shapesStore, path);
+  if (members.length) {
+    let current: Term[] = [node];
+    for (let i = members.length - 1; i >= 0; i--) {
+      const next: Term[] = [];
+      for (const t of current) next.push(...inverseValueNodesViaPath(t, members[i], dataStore, shapesStore));
       current = next;
     }
     return current;
@@ -138,16 +189,20 @@ export function checkConstraint(
     return valueNodes.every(vn => allowed.has(termKey(vn)));
   }
 
-  // Range (numeric) — non-numeric values return false (match py-srl, no crash)
+  // Value range — numeric AND ordered temporal (xsd:date/dateTime) types.
+  // A value that is not orderable, or whose family differs from the bound's
+  // (e.g. number vs date), is non-conforming — matching py-srl / rdflib, where
+  // such a comparison raises TypeError and is treated as a failure.
   if (kind === 'minInclusive' || kind === 'maxInclusive' || kind === 'minExclusive' || kind === 'maxExclusive') {
-    const bound = pyValue(value);
+    const bound = rangeKey(value);
+    if (!bound) return false;
     return valueNodes.every(vn => {
-      const v = pyValue(vn);
-      if (typeof v !== 'number' || typeof bound !== 'number') return false;
-      if (kind === 'minInclusive') return v >= bound;
-      if (kind === 'maxInclusive') return v <= bound;
-      if (kind === 'minExclusive') return v > bound;
-      return v < bound; // maxExclusive
+      const v = rangeKey(vn);
+      if (!v || v.fam !== bound.fam) return false;
+      if (kind === 'minInclusive') return v.v >= bound.v;
+      if (kind === 'maxInclusive') return v.v <= bound.v;
+      if (kind === 'minExclusive') return v.v > bound.v;
+      return v.v < bound.v; // maxExclusive
     });
   }
 
@@ -258,7 +313,20 @@ function checkProperty(focusNode: Term, prop: PropertyShape, dataStore: Store, s
 
 export function valueNodesOf(node: Term, path: Term | null, dataStore: Store, shapesStore: Store): Term[] {
   if (path === null) return [];
-  return valueNodesViaPath(node, path, dataStore, shapesStore);
+  // SHACL value nodes are a SET (spec) — a sequence path whose intermediates
+  // converge on one endpoint would otherwise yield duplicates and mis-count
+  // sh:minCount / sh:maxCount. Dedup by value-based termKey (n3 Terms are not
+  // reference-unique). Mirrors py-srl's `_value_nodes` returning a set.
+  const seen = new Set<string>();
+  const out: Term[] = [];
+  for (const t of valueNodesViaPath(node, path, dataStore, shapesStore)) {
+    const k = termKey(t);
+    if (!seen.has(k)) {
+      seen.add(k);
+      out.push(t);
+    }
+  }
+  return out;
 }
 
 export function conforms(node: Term, shape: NodeShape, dataStore: Store, shapesStore: Store, depth = 0): boolean {

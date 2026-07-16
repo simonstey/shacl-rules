@@ -262,15 +262,24 @@ export class SRLParser extends CstParser {
     this.CONSUME(RBrace);
   });
 
-  // BodyBasicSeq = ( BodyBasicElement ( '.' BodyBasicElement? )* )?  ([24])
+  // BodyBasicSeq = ( BodyBasicElement ( '.' BodyBasicElement? | BodyBasicElement )* )?  ([24])
+  // Mirrors bodyPattern1: the dot is OPTIONAL between a triple pattern and a
+  // following FILTER (the spec grammar does not require it inside a NOT body).
+  // The two MANY alternatives have disjoint first sets (Dot vs an element start),
+  // so there is no ambiguity.
   private bodyBasicSeq = this.RULE('bodyBasicSeq', () => {
     this.OPTION(() => {
       this.SUBRULE(this.bodyBasicElement);
       this.MANY(() => {
-        this.CONSUME(Dot);
-        this.OPTION2(() => {
-          this.SUBRULE2(this.bodyBasicElement);
-        });
+        this.OR([
+          {
+            ALT: () => {
+              this.CONSUME(Dot);
+              this.OPTION2(() => this.SUBRULE2(this.bodyBasicElement));
+            },
+          },
+          { ALT: () => this.SUBRULE3(this.bodyBasicElement) },
+        ]);
       });
     });
   });

@@ -51,7 +51,6 @@ export interface ExecutionResult {
 
 export interface ExecutorOptions {
   maxIterations?: number;
-  includeBaseTriples?: boolean;
   extensions?: boolean;
   shapesGraph?: string;
   shapesStore?: Store;
@@ -59,10 +58,9 @@ export interface ExecutorOptions {
 
 const DEFAULT_OPTIONS: ExecutorOptions = {
   maxIterations: 100,
-  includeBaseTriples: false,
 };
 
-export function expandDeclarations(declarations: Declaration[], prefixes: Map<string, string>): Rule[] {
+export function expandDeclarations(declarations: Declaration[], _prefixes?: Map<string, string>): Rule[] {
   const expandedRules: Rule[] = [];
   
   for (const decl of declarations) {
@@ -234,7 +232,7 @@ function generateRuleName(rule: Rule, index: number): string {
     const firstPattern = headPatterns[0];
     const pred = firstPattern.predicate;
     if (isRDFTerm(pred) && pred.termType === 'iri') {
-      const localName = pred.value.split(/[#\/]/).pop() || pred.value;
+      const localName = pred.value.split(/[#/]/).pop() || pred.value;
       return `Rule ${index + 1}: ${localName}`;
     }
   }
@@ -288,8 +286,13 @@ export function executeRules(
       shapesStore = undefined;
     }
   }
-  const targetedRules = ruleSet.targetedRules ?? [];
-  if (targetedRules.length > 0 && !shapesStore) {
+  // Targeted rules are the opt-in extension: honor options.extensions as a
+  // defensive gate (matching py-srl's ExtensionError), so passing them without
+  // extensions:true is a no-op-with-diagnostic rather than silently evaluating.
+  const targetedRules = opts.extensions ? (ruleSet.targetedRules ?? []) : [];
+  if ((ruleSet.targetedRules?.length ?? 0) > 0 && !opts.extensions) {
+    errors.push('Targeted rules (FOR ?v IN <shape>) require the opt-in extension; pass options.extensions: true.');
+  } else if (targetedRules.length > 0 && !shapesStore) {
     errors.push('Targeted rules (FOR ?v IN <shape>) require a shapes graph; pass options.shapesGraph or options.shapesStore.');
   }
 
@@ -369,40 +372,46 @@ export function executeRules(
 
   let totalIterations = 0;
 
-  // Instantiate a rule's head for every solution; record any genuinely new
-  // inferred triple. Returns true if at least one new triple was produced.
+  // Instantiate head templates for every solution and record any genuinely new
+  // inferred triple (deduped via seenTriples, added to the store so later rules
+  // see it). Returns true if at least one new triple was produced. Shared by the
+  // plain-rule and targeted-rule paths so their emit/dedup logic stays in sync.
+  const emitHeads = (
+    patterns: TriplePattern[],
+    solutions: SolutionMapping[],
+    ruleInfo: RuleInfo,
+  ): boolean => {
+    let produced = false;
+    for (const solution of solutions) {
+      for (const headPattern of patterns) {
+        const quad = instantiateTriple(headPattern, solution);
+        if (!quad) continue;
+        const quadStr = quadToString(quad);
+        if (seenTriples.has(quadStr)) continue;
+        seenTriples.add(quadStr);
+        store.addQuad(quad);
+        inferredTriples.push({
+          quad,
+          quadString: quadStr,
+          sourceRule: ruleInfo,
+          iteration: totalIterations,
+        });
+        produced = true;
+      }
+    }
+    return produced;
+  };
+
   const applyRule = (stratRule: StratifiedRule): boolean => {
     const rule = stratRule.rule;
     const ruleInfo = ruleInfos[stratRule.originalIndex];
-    let produced = false;
 
     try {
-      const solutions = evaluateRuleBody(rule, store);
-
-      for (const solution of solutions) {
-        for (const headPattern of rule.head.patterns) {
-          const quad = instantiateTriple(headPattern, solution);
-          if (quad) {
-            const quadStr = quadToString(quad);
-            if (!seenTriples.has(quadStr)) {
-              seenTriples.add(quadStr);
-              store.addQuad(quad);
-              inferredTriples.push({
-                quad,
-                quadString: quadStr,
-                sourceRule: ruleInfo,
-                iteration: totalIterations,
-              });
-              produced = true;
-            }
-          }
-        }
-      }
+      return emitHeads(rule.head.patterns, evaluateRuleBody(rule, store), ruleInfo);
     } catch (e) {
       errors.push(`Error evaluating rule "${ruleInfo.name}": ${e instanceof Error ? e.message : String(e)}`);
+      return false;
     }
-
-    return produced;
   };
 
   const applyTargetedRule = (tr: TargetedRule): boolean => {
@@ -416,20 +425,7 @@ export function executeRules(
         if (!conforms(node, shape, store, shapesStore)) continue;
         const seed: SolutionMapping = { [tr.focusVar]: node };
         const solutions = evaluateElements(tr.rule.body.elements, [seed], store);
-        for (const solution of solutions) {
-          for (const headPattern of tr.rule.head.patterns) {
-            const quad = instantiateTriple(headPattern, solution);
-            if (quad) {
-              const quadStr = quadToString(quad);
-              if (!seenTriples.has(quadStr)) {
-                seenTriples.add(quadStr);
-                store.addQuad(quad);
-                inferredTriples.push({ quad, quadString: quadStr, sourceRule: ruleInfo, iteration: totalIterations });
-                produced = true;
-              }
-            }
-          }
-        }
+        if (emitHeads(tr.rule.head.patterns, solutions, ruleInfo)) produced = true;
       }
     } catch (e) {
       errors.push(`Error evaluating targeted rule "${ruleInfo?.name ?? tr.shape}": ${e instanceof Error ? e.message : String(e)}`);

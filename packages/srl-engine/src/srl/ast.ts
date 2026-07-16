@@ -1119,82 +1119,96 @@ export class ASTBuilder {
     return this.visitAdditiveExpression(children.additiveExpression[0] as CstNode);
   }
 
+  // Merge the two operator-token arrays into a single list ordered by source
+  // position, so the i-th operator can be paired with the i-th right operand.
+  // (Chevrotain groups tokens by type, losing interleaving order; pairing an
+  // operator to an operand by "is any token of this type before the operand"
+  // is wrong once both operators appear, e.g. `a + b - c`.)
+  private orderedOperators(
+    tokensA: IToken[] | undefined,
+    opA: BinaryOperator,
+    tokensB: IToken[] | undefined,
+    opB: BinaryOperator
+  ): BinaryOperator[] {
+    const tagged = [
+      ...(tokensA ?? []).map(t => ({ offset: t.startOffset, op: opA })),
+      ...(tokensB ?? []).map(t => ({ offset: t.startOffset, op: opB })),
+    ];
+    tagged.sort((x, y) => x.offset - y.offset);
+    return tagged.map(t => t.op);
+  }
+
   private visitAdditiveExpression(node: CstNode): Expression {
     const children = node.children as CSTChildren;
     const multNodes = children.multiplicativeExpression as CstNode[];
-    const plusTokens = children.Plus as IToken[] | undefined;
-    const minusTokens = children.Minus as IToken[] | undefined;
-    
+
     if (multNodes.length === 1) {
       return this.visitMultiplicativeExpression(multNodes[0]);
     }
-    
+
+    const operators = this.orderedOperators(
+      children.Plus as IToken[] | undefined, '+',
+      children.Minus as IToken[] | undefined, '-'
+    );
+
     let left = this.visitMultiplicativeExpression(multNodes[0]);
-    
     for (let i = 1; i < multNodes.length; i++) {
       const right = this.visitMultiplicativeExpression(multNodes[i]);
-      const isPlus = plusTokens?.some(t => this.isTokenBeforeNode(t, multNodes[i]));
       left = {
         type: 'binary',
-        operator: isPlus ? '+' : '-',
+        operator: operators[i - 1] ?? '+',
         left,
         right,
       };
     }
-    
+
     return left;
   }
 
   private visitMultiplicativeExpression(node: CstNode): Expression {
     const children = node.children as CSTChildren;
     const unaryNodes = children.unaryExpression as CstNode[];
-    const asteriskTokens = children.Asterisk as IToken[] | undefined;
-    
+
     if (unaryNodes.length === 1) {
       return this.visitUnaryExpression(unaryNodes[0]);
     }
-    
+
+    const operators = this.orderedOperators(
+      children.Asterisk as IToken[] | undefined, '*',
+      children.Slash as IToken[] | undefined, '/'
+    );
+
     let left = this.visitUnaryExpression(unaryNodes[0]);
-    
     for (let i = 1; i < unaryNodes.length; i++) {
       const right = this.visitUnaryExpression(unaryNodes[i]);
-      const isMult = asteriskTokens?.some(t => this.isTokenBeforeNode(t, unaryNodes[i]));
       left = {
         type: 'binary',
-        operator: isMult ? '*' : '/',
+        operator: operators[i - 1] ?? '*',
         left,
         right,
       };
     }
-    
+
     return left;
   }
 
   private visitUnaryExpression(node: CstNode): Expression {
     const children = node.children as CSTChildren;
     const primaryNode = children.primaryExpression?.[0] as CstNode;
-    
+    const operand = this.visitPrimaryExpression(primaryNode);
+
+    // A unary expression always has a primary operand; the prefix token (if any)
+    // determines the operator. (The earlier `!primaryNode` guards were never
+    // true — a unary node always carries its primary — so signs were dropped.)
     if (children.Bang) {
-      return {
-        type: 'unary',
-        operator: '!',
-        operand: this.visitPrimaryExpression(primaryNode),
-      };
-    } else if (children.Plus && !primaryNode) {
-      return {
-        type: 'unary',
-        operator: '+',
-        operand: this.visitPrimaryExpression(children.primaryExpression?.[0] as CstNode),
-      };
-    } else if (children.Minus && !children.primaryExpression) {
-      return {
-        type: 'unary',
-        operator: '-',
-        operand: this.visitPrimaryExpression(children.primaryExpression?.[0] as CstNode),
-      };
+      return { type: 'unary', operator: '!', operand };
+    } else if (children.Plus) {
+      return { type: 'unary', operator: '+', operand };
+    } else if (children.Minus) {
+      return { type: 'unary', operator: '-', operand };
     }
-    
-    return this.visitPrimaryExpression(primaryNode);
+
+    return operand;
   }
 
   private visitPrimaryExpression(node: CstNode): Expression {
@@ -1288,30 +1302,6 @@ export class ASTBuilder {
       .replace(/\\n/g, '\n')
       .replace(/\\r/g, '\r')
       .replace(/\\t/g, '\t');
-  }
-
-  private isTokenBeforeNode(token: IToken, node: CstNode): boolean {
-    const loc = getLocationFromNode(node);
-    if (!loc) return false;
-    const tokenEnd = token.endOffset ?? token.startOffset;
-    const nodeStart = this.getNodeStartOffset(node);
-    return tokenEnd < nodeStart;
-  }
-
-  private getNodeStartOffset(node: CstNode): number {
-    const children = node.children as CSTChildren;
-    for (const key of Object.keys(children)) {
-      const items = children[key];
-      if (items?.length > 0) {
-        const first = items[0];
-        if ('startOffset' in first) {
-          return first.startOffset;
-        } else if ('children' in first) {
-          return this.getNodeStartOffset(first);
-        }
-      }
-    }
-    return 0;
   }
 }
 

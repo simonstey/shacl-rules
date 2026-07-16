@@ -219,6 +219,32 @@ ex:BadColor ex:role ex:admin ; ex:color ex:blue .`;
     expect(conforms(namedNode('http://example.org/BadRole'), shape, dataStore, shapesStore)).toBe(false);
     expect(conforms(namedNode('http://example.org/BadColor'), shape, dataStore, shapesStore)).toBe(false);
   });
+
+  it('maxCount dedups value nodes of a converging sequence path (SHACL set semantics)', () => {
+    // ex:a/ex:b from root reaches ex:z via TWO intermediates (ex:x, ex:y). Value
+    // nodes are a SET → {ex:z}, count 1, so maxCount 1 must CONFORM. Without dedup
+    // the path yields [ex:z, ex:z] (count 2) and wrongly fails.
+    const shapes = SH_PFX + `ex:S a sh:NodeShape ; sh:targetNode ex:root ;
+      sh:property [ sh:path ( ex:a ex:b ) ; sh:maxCount 1 ] .`;
+    const data = `@prefix ex: <http://example.org/> .
+ex:root ex:a ex:x , ex:y .
+ex:x ex:b ex:z .
+ex:y ex:b ex:z .`;
+    const { shape, dataStore, shapesStore } = dataAndShape(shapes, data, 'http://example.org/S');
+    expect(conforms(namedNode('http://example.org/root'), shape, dataStore, shapesStore)).toBe(true);
+  });
+
+  it('minInclusive over xsd:date compares chronologically, not as strings', () => {
+    const shapes = SH_PFX + `ex:S a sh:NodeShape ;
+      sh:property [ sh:path ex:birthDate ; sh:minInclusive "2000-01-01"^^xsd:date ] .`;
+    const data = `@prefix ex: <http://example.org/> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+ex:Alice ex:birthDate "2005-06-01"^^xsd:date .
+ex:Bob   ex:birthDate "1990-03-15"^^xsd:date .`;
+    const { shape, dataStore, shapesStore } = dataAndShape(shapes, data, 'http://example.org/S');
+    expect(conforms(namedNode('http://example.org/Alice'), shape, dataStore, shapesStore)).toBe(true);  // 2005 ≥ 2000
+    expect(conforms(namedNode('http://example.org/Bob'), shape, dataStore, shapesStore)).toBe(false);   // 1990 < 2000
+  });
 });
 
 describe('checkConstraint: list family + language', () => {
@@ -282,5 +308,27 @@ ex:B a sh:NodeShape ; sh:property [ sh:path ex:b ; sh:minCount 1 ] .`;
     const data = `@prefix ex: <http://example.org/> .\nex:X ex:b 1 .`;
     const { shape, dataStore, shapesStore } = dataAndShape(shapes, data, 'http://example.org/S');
     expect(conforms(namedNode('http://example.org/X'), shape, dataStore, shapesStore)).toBe(true);
+  });
+
+  it('nested inversePath(inversePath(p)) = forward p (T3 recursion)', () => {
+    // inverse of inverse of ex:parent is forward ex:parent. From ex:Child that
+    // reaches ex:Parent, so ex:Child conforms and ex:Parent does not.
+    const shapes = SH_PFX + `ex:S a sh:NodeShape ;
+      sh:property [ sh:path [ sh:inversePath [ sh:inversePath ex:parent ] ] ; sh:minCount 1 ] .`;
+    const data = `@prefix ex: <http://example.org/> .\nex:Child ex:parent ex:Parent .`;
+    const { shape, dataStore, shapesStore } = dataAndShape(shapes, data, 'http://example.org/S');
+    expect(conforms(namedNode('http://example.org/Child'), shape, dataStore, shapesStore)).toBe(true);
+    expect(conforms(namedNode('http://example.org/Parent'), shape, dataStore, shapesStore)).toBe(false);
+  });
+
+  it('inversePath over a sequence reverses + inverts each step (T3)', () => {
+    // inversePath( ex:a/ex:b ): from Z, step back ex:b to Y, then back ex:a to X.
+    // X --a--> Y --b--> Z, so from Z the path reaches X.
+    const shapes = SH_PFX + `ex:S a sh:NodeShape ;
+      sh:property [ sh:path [ sh:inversePath ( ex:a ex:b ) ] ; sh:minCount 1 ] .`;
+    const data = `@prefix ex: <http://example.org/> .\nex:X ex:a ex:Y . ex:Y ex:b ex:Z .`;
+    const { shape, dataStore, shapesStore } = dataAndShape(shapes, data, 'http://example.org/S');
+    expect(conforms(namedNode('http://example.org/Z'), shape, dataStore, shapesStore)).toBe(true);
+    expect(conforms(namedNode('http://example.org/X'), shape, dataStore, shapesStore)).toBe(false);
   });
 });

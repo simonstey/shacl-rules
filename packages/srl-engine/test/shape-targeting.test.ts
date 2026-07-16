@@ -96,6 +96,16 @@ describe('executeRules with targeted rules (py-srl oracle)', () => {
     expect(result.errors.join(' ')).toMatch(/shapes graph/i);
   });
 
+  it('does not evaluate targeted rules when extensions is off (defensive guard)', () => {
+    // Parsed with extensions on (to obtain targetedRules), but executed with the
+    // flag off: the rule must NOT fire, and an extension diagnostic is reported.
+    const rs = buildAST(RULE_SRC, { extensions: true });
+    const result = executeRules(rs, DATA, { shapesGraph: SHAPES });
+    const inferred = result.inferredTriples.map(t => t.quadString);
+    expect(inferred).not.toContain('<http://example.org/Alice> <http://example.org/status> <http://example.org/adult>');
+    expect(result.errors.join(' ')).toMatch(/extension/i);
+  });
+
   it('sees inferred target membership across strata', () => {
     const src = `PREFIX ex: <http://example.org/>
 RULE { ?x ex:age 40 } WHERE { ?x ex:bornYear ?y }
@@ -151,5 +161,22 @@ describe('validateSRL for targeted rules', () => {
 RULE ex:r FOR ?this IN ex:AdultShape { ?this ex:status ?missing } WHERE { ?this ex:age ?a }`;
     const result = validateSRL(bad, { extensions: true });
     expect(result.isValid).toBe(false);
+  });
+
+  it('reports a targeted-gate stratification cycle as invalid (validation matches execution)', () => {
+    // tA's head asserts ex:q (BShape reads it) and tB's head asserts ex:p
+    // (AShape reads it) → the gate adds CLOSED tA→tB and tB→tA: a closed cycle.
+    // The validator must catch this so isValid can't be true while executeRules
+    // would report a stratification error (the run is gated on isValid).
+    const cyclicShapes = `@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix ex: <http://example.org/> .
+ex:AShape a sh:NodeShape ; sh:targetClass ex:C ; sh:property [ sh:path ex:p ; sh:minCount 1 ] .
+ex:BShape a sh:NodeShape ; sh:targetClass ex:C ; sh:property [ sh:path ex:q ; sh:minCount 1 ] .`;
+    const cyclicSrc = `PREFIX ex: <http://example.org/>
+RULE ex:tA FOR ?x IN ex:AShape { ?x ex:q ex:v } WHERE { ?x ex:a ?y }
+RULE ex:tB FOR ?x IN ex:BShape { ?x ex:p ex:v } WHERE { ?x ex:b ?y }`;
+    const result = validateSRL(cyclicSrc, { extensions: true, shapesGraph: cyclicShapes });
+    expect(result.isValid).toBe(false);
+    expect(result.messages.some(m => /stratif/i.test(m.message))).toBe(true);
   });
 });

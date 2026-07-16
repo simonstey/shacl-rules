@@ -55,4 +55,14 @@ RULE { :x :q ?missing } WHERE { :s :p ?o }`;
     const result = validateSRL(bad);
     expect(result.isValid).toBe(false);
   });
+
+  it('inferredTriples excludes base graph triples; baseTriples holds them (B1)', () => {
+    const ast = buildAST(RULES);
+    const result = executeRules(ast, DATA);
+    const inferred = result.inferredTriples.map(t => t.quadString);
+    // The base triple :s :p :o must NOT appear among inferred triples...
+    expect(inferred).not.toContain('<http://example/s> <http://example/p> <http://example/o>');
+    // ...it lives in baseTriples instead (the documented recipe: concat both).
+    expect(result.baseTriples.length).toBeGreaterThan(0);
+  });
 });
