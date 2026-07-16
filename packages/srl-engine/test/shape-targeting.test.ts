@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { Store, Parser, DataFactory } from 'n3';
-import { buildAST, stratifyRules } from '../src/index';
+import { buildAST, stratifyRules, executeRules } from '../src/index';
 import { loadShape } from '../src/shapes/model';
 import { shapeReferencedPredicates } from '../src/rules/stratifier';
 
@@ -64,5 +64,47 @@ RULE ex:r1 FOR ?this IN ex:PersonShape { ?this ex:age 40 } WHERE { ?this ex:born
     });
     expect(r1Layer).toBeGreaterThanOrEqual(0);
     expect(r2Layer).toBeGreaterThan(r1Layer);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// py-srl oracle: executeRules with targeted rules
+// ---------------------------------------------------------------------------
+
+const DATA = `@prefix ex: <http://example.org/> .
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+ex:Alice rdf:type ex:Person ; ex:age 30 .
+ex:Bob rdf:type ex:Person ; ex:age 10 .`;
+
+const RULE_SRC = `PREFIX ex: <http://example.org/>
+RULE ex:r FOR ?this IN ex:AdultShape { ?this ex:status ex:adult } WHERE { ?this ex:age ?a }`;
+
+describe('executeRules with targeted rules (py-srl oracle)', () => {
+  it('fires only for conforming focus nodes', () => {
+    const rs = buildAST(RULE_SRC, { extensions: true });
+    const result = executeRules(rs, DATA, { extensions: true, shapesGraph: SHAPES });
+    const inferred = result.inferredTriples.map(t => t.quadString);
+    expect(inferred).toContain('<http://example.org/Alice> <http://example.org/status> <http://example.org/adult>');
+    expect(inferred).not.toContain('<http://example.org/Bob> <http://example.org/status> <http://example.org/adult>');
+  });
+
+  it('errors (not throws) when a targeted rule set has no shapes graph', () => {
+    const rs = buildAST(RULE_SRC, { extensions: true });
+    const result = executeRules(rs, DATA, { extensions: true });
+    expect(result.errors.join(' ')).toMatch(/shapes graph/i);
+  });
+
+  it('sees inferred target membership across strata', () => {
+    const src = `PREFIX ex: <http://example.org/>
+RULE { ?x ex:age 40 } WHERE { ?x ex:bornYear ?y }
+RULE ex:r FOR ?this IN ex:AdultShape { ?this ex:status ex:adult } WHERE { ?this ex:age ?a }`;
+    const data = `@prefix ex: <http://example.org/> .
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+ex:Dana rdf:type ex:Person ; ex:bornYear 1980 .`;
+    const rs = buildAST(src, { extensions: true });
+    const result = executeRules(rs, data, { extensions: true, shapesGraph: SHAPES });
+    const inferred = result.inferredTriples.map(t => t.quadString);
+    expect(inferred).toContain('<http://example.org/Dana> <http://example.org/age> "40"^^<http://www.w3.org/2001/XMLSchema#integer>');
+    expect(inferred).toContain('<http://example.org/Dana> <http://example.org/status> <http://example.org/adult>');
   });
 });
