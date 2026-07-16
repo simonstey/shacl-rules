@@ -145,3 +145,27 @@ ex:S a sh:NodeShape ; sh:closed true .`);
     expect(TARGET_PREDS.has('targetClass')).toBe(true);
   });
 });
+
+import { focusNodes } from '../src/shapes/targets';
+
+describe('focusNodes', () => {
+  it('selects targetClass instances', () => {
+    const shapesStore = storeFrom(SHAPES_TTL);
+    const dataStore = storeFrom(`@prefix ex: <http://example.org/> .
+ex:Alice a ex:Person . ex:Bob a ex:Person . ex:Widget a ex:Thing .`);
+    const shape = loadShape(shapesStore, namedNode('http://example.org/AdultShape'));
+    const nodes = focusNodes(shape, dataStore, shapesStore).map(t => t.value).sort();
+    expect(nodes).toEqual(['http://example.org/Alice', 'http://example.org/Bob']);
+  });
+
+  it('selects targetClass instances via transitive subClassOf', () => {
+    const shapesStore = storeFrom(`@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix ex: <http://example.org/> .
+ex:S a sh:NodeShape ; sh:targetClass ex:Animal .`);
+    const dataStore = storeFrom(`@prefix ex: <http://example.org/> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+ex:Dog rdfs:subClassOf ex:Animal . ex:Rex a ex:Dog .`);
+    const shape = loadShape(shapesStore, namedNode('http://example.org/S'));
+    expect(focusNodes(shape, dataStore, shapesStore).map(t => t.value)).toContain('http://example.org/Rex');
+  });
+});
