@@ -439,9 +439,13 @@ export function stratifyRules(
  * Check whether a rule set is stratifiable without throwing. Returns a reason
  * when the stratification condition is violated (used by the validator).
  */
-export function isStratifiable(rules: Rule[]): StratificationCheck {
+export function isStratifiable(
+  rules: Rule[],
+  targetedRules: TargetedRule[] = [],
+  shapesStore?: Store,
+): StratificationCheck {
   try {
-    stratifyRules(rules);
+    stratifyRules(rules, targetedRules, shapesStore);
     return { stratifiable: true };
   } catch (e) {
     return {

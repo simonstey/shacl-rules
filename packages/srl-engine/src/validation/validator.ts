@@ -1,6 +1,7 @@
 import { parseSRL } from '../srl/parser';
 import { SRLLexer } from '../srl/tokens';
 import { IToken } from 'chevrotain';
+import { Store, Parser as N3Parser } from 'n3';
 import {
   buildAST,
   RuleSet,
@@ -304,7 +305,7 @@ function checkRuleWellFormedness(rule: Rule, messages: ValidationMessage[], v0: 
 
 // AST-driven semantic checks: rule well-formedness, ground DATA blocks, and the
 // stratification condition. Runs only when the parse produced a clean CST.
-function checkAstSemantics(ruleSet: RuleSet): ValidationMessage[] {
+function checkAstSemantics(ruleSet: RuleSet, shapesStore?: import('n3').Store): ValidationMessage[] {
   const messages: ValidationMessage[] = [];
 
   for (const rule of ruleSet.rules) {
@@ -326,9 +327,11 @@ function checkAstSemantics(ruleSet: RuleSet): ValidationMessage[] {
   }
 
   // Stratification: declarations expand to synthetic rules, so check the full set.
+  // Targeted rules (+ their shape-gate edges) must be included, else a targeted-gate
+  // cycle would pass validation but throw at execution (validation is the run gate).
   const expanded = expandDeclarations(ruleSet.declarations, ruleSet.prefixes);
   const allRules = [...ruleSet.rules, ...expanded];
-  const strat = isStratifiable(allRules);
+  const strat = isStratifiable(allRules, ruleSet.targetedRules, shapesStore);
   if (!strat.stratifiable) {
     messages.push(locToMessage('error', strat.reason ?? 'Rule set is not stratifiable'));
   }
@@ -338,7 +341,7 @@ function checkAstSemantics(ruleSet: RuleSet): ValidationMessage[] {
 
 export function validateSRL(
   code: string,
-  options?: { extensions?: boolean; shapesGraph?: string; shapesStore?: import('n3').Store },
+  options?: { extensions?: boolean; shapesGraph?: string; shapesStore?: Store },
 ): ValidationResult {
   const startTime = performance.now();
   const messages: ValidationMessage[] = [];
@@ -385,7 +388,19 @@ export function validateSRL(
       // rather than crashing validation.
       try {
         const ruleSet = buildAST(code, { extensions: options?.extensions });
-        messages.push(...checkAstSemantics(ruleSet));
+        // Resolve the shapes graph so the stratification check can see the
+        // targeted-rule gate edges. shapesStore wins; else parse shapesGraph
+        // (a bad shapes graph degrades to no store rather than throwing).
+        let shapesStore: Store | undefined = options?.shapesStore;
+        if (!shapesStore && options?.shapesGraph) {
+          try {
+            shapesStore = new Store();
+            shapesStore.addQuads(new N3Parser().parse(options.shapesGraph));
+          } catch {
+            shapesStore = undefined;
+          }
+        }
+        messages.push(...checkAstSemantics(ruleSet, shapesStore));
       } catch (e) {
         messages.push({
           type: 'error',

@@ -288,8 +288,13 @@ export function executeRules(
       shapesStore = undefined;
     }
   }
-  const targetedRules = ruleSet.targetedRules ?? [];
-  if (targetedRules.length > 0 && !shapesStore) {
+  // Targeted rules are the opt-in extension: honor options.extensions as a
+  // defensive gate (matching py-srl's ExtensionError), so passing them without
+  // extensions:true is a no-op-with-diagnostic rather than silently evaluating.
+  const targetedRules = opts.extensions ? (ruleSet.targetedRules ?? []) : [];
+  if ((ruleSet.targetedRules?.length ?? 0) > 0 && !opts.extensions) {
+    errors.push('Targeted rules (FOR ?v IN <shape>) require the opt-in extension; pass options.extensions: true.');
+  } else if (targetedRules.length > 0 && !shapesStore) {
     errors.push('Targeted rules (FOR ?v IN <shape>) require a shapes graph; pass options.shapesGraph or options.shapesStore.');
   }
 
