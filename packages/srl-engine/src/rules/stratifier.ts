@@ -2,6 +2,7 @@ import { Store, DataFactory } from 'n3';
 import { Rule, TargetedRule, TriplePattern, BodyElement, NegationElement, RDFTerm, PathExpression } from '../srl/ast';
 import { isRDFTerm, isVariable, isTriplePattern } from './pattern-matcher';
 import { NodeShape, loadShape } from '../shapes/model';
+import { RDF_TYPE } from '../shapes/rdf-helpers';
 
 /**
  * Dependency graph and stratification for SHACL 1.2 Rules.
@@ -53,8 +54,6 @@ export interface StratificationCheck {
 // Shape predicate helpers
 // ---------------------------------------------------------------------------
 
-const RDF_TYPE_IRI = 'http://www.w3.org/1999/02/22-rdf-syntax-ns#type';
-
 /**
  * Returns the set of predicate IRIs a shape reads when evaluating conformance.
  * Port of py-srl `shape_referenced_predicates`.
@@ -63,18 +62,18 @@ export function shapeReferencedPredicates(shape: NodeShape): Set<string> {
   const preds = new Set<string>();
   for (const [name, obj] of shape.targets) {
     if (name === 'targetClass') {
-      preds.add(RDF_TYPE_IRI);
+      preds.add(RDF_TYPE);
     } else if (name === 'targetSubjectsOf' || name === 'targetObjectsOf') {
       if (obj.termType === 'NamedNode') preds.add(obj.value);
     }
   }
   for (const c of shape.constraints) {
-    if (c.kind === 'class') preds.add(RDF_TYPE_IRI);
+    if (c.kind === 'class') preds.add(RDF_TYPE);
   }
   for (const ps of shape.propertyShapes) {
     if (ps.path && ps.path.termType === 'NamedNode') preds.add(ps.path.value);
     for (const c of ps.constraints) {
-      if (c.kind === 'class') preds.add(RDF_TYPE_IRI);
+      if (c.kind === 'class') preds.add(RDF_TYPE);
     }
   }
   return preds;
@@ -95,10 +94,6 @@ function headPredicateIris(rule: Rule): { iris: Set<string>; hasVar: boolean } {
     }
   }
   return { iris, hasVar };
-}
-
-function termForShape(iri: string) {
-  return DataFactory.namedNode(iri);
 }
 
 // ---------------------------------------------------------------------------
@@ -356,14 +351,18 @@ export function stratifyRules(
     for (let i = 0; i < n; i++) allVertices.push({ vertex: i, rule: rules[i] });
     for (let t = 0; t < m; t++) allVertices.push({ vertex: n + t, rule: targetedRules[t].rule });
 
-    // Add body-pattern dependency edges from srcVertex to every OTHER vertex
-    // whose head the pattern could match (open/closed as usual).
-    const addBodyDeps = (srcVertex: number, srcRule: Rule): void => {
+    // Add body-pattern dependency edges from srcVertex to every vertex in `dests`
+    // (other than itself) whose head the pattern could match (open/closed as usual).
+    const addBodyDeps = (
+      srcVertex: number,
+      srcRule: Rule,
+      dests: Array<{ vertex: number; rule: Rule }>,
+    ): void => {
       const bodyDeps = bodyPatternDependencies(srcRule);
       const forceClosed = hasAssignment(srcRule) || headHasBlankNode(srcRule);
       for (const { pattern, label } of bodyDeps) {
         const lbl: EdgeLabel = forceClosed ? CLOSED : label;
-        for (const { vertex: vj, rule: rj } of allVertices) {
+        for (const { vertex: vj, rule: rj } of dests) {
           if (vj === srcVertex) continue;
           if (patternDependsOnRule(pattern, rj)) {
             edges.push({ from: srcVertex, to: vj, label: lbl });
@@ -372,23 +371,16 @@ export function stratifyRules(
       }
     };
 
+    // Targeted vertices only (indices n..n+m-1) — the plain-only
+    // buildDependencyGraph already covered plain→plain edges.
+    const targetedVertices = allVertices.slice(n);
+
     // (1) Targeted rules' bodies may depend on any (plain or targeted) head.
-    for (let t = 0; t < m; t++) addBodyDeps(n + t, targetedRules[t].rule);
+    for (let t = 0; t < m; t++) addBodyDeps(n + t, targetedRules[t].rule, allVertices);
 
     // (2) Plain rules' bodies may depend on targeted-rule heads (the plain-only
     // buildDependencyGraph above did not see targeted vertices).
-    for (let i = 0; i < n; i++) {
-      const bodyDeps = bodyPatternDependencies(rules[i]);
-      const forceClosed = hasAssignment(rules[i]) || headHasBlankNode(rules[i]);
-      for (const { pattern, label } of bodyDeps) {
-        const lbl: EdgeLabel = forceClosed ? CLOSED : label;
-        for (let t = 0; t < m; t++) {
-          if (patternDependsOnRule(pattern, targetedRules[t].rule)) {
-            edges.push({ from: i, to: n + t, label: lbl });
-          }
-        }
-      }
-    }
+    for (let i = 0; i < n; i++) addBodyDeps(i, rules[i], targetedVertices);
 
     // (3) Gate: CLOSED edge from each targeted rule to any vertex whose head can
     // assert a predicate its shape reads (places the targeted rule strictly above
@@ -397,7 +389,7 @@ export function stratifyRules(
       for (let t = 0; t < m; t++) {
         let refs: Set<string>;
         try {
-          const shape = loadShape(shapesStore, termForShape(targetedRules[t].shape));
+          const shape = loadShape(shapesStore, DataFactory.namedNode(targetedRules[t].shape));
           refs = shapeReferencedPredicates(shape);
         } catch {
           // Shape failed to load (e.g. unsupported SHACL feature). Skip this
