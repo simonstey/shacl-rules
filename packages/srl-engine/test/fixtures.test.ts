@@ -94,10 +94,7 @@ const KNOWN_DIVERGENT: Record<string, string> = {
   //    fixtures, so validateSRL reports valid where the manifest wants a
   //    rejection. Pre-existing tokenizer leniency (see CLAUDE.md), not a
   //    regression. Documented, not fixed.
-  'syntax/syntax-rule-bad-04.srl': 'Turtle leniency: missing PREFIX decl not rejected — engine tolerates undeclared prefix',
-  'syntax/syntax-data-bad-09.srl': 'Turtle leniency: malformed literal `"xyx"^^:datatype.` + double-dot accepted by lexer',
-  'syntax/syntax-data-bad-10.srl': 'Turtle leniency: `1.` (number+dot ambiguity) accepted by lexer',
-  'syntax/syntax-data-bad-11.srl': 'Turtle leniency: `_:b.` (bnode+dot ambiguity) accepted by lexer',
+  'syntax/syntax-rule-bad-04.srl': 'Deliberate UX choice: an undeclared prefix is a WARNING (not an error), so the playground does not flag prefixes used before their PREFIX line is typed. No positive fixture relies on this; promoting to an error would reject bad-04 but degrade mid-edit UX.',
 
   // ── Non-RDF-1.2 engine/harness divergences (see task-6-report.md concerns).
   //    NOT regressions (extraction is a verified pure rename) and NOT deferred

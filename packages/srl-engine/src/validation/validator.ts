@@ -142,6 +142,27 @@ function extractPrefixUsages(
   return prefixUsages;
 }
 
+// Two consecutive `.` tokens are an empty statement — never valid Turtle/SRL.
+// The lenient optional-dot grammar accepts them (e.g. `:s :p 1. .`), so catch
+// them off the token stream. A bare `Dot` is only ever a statement separator,
+// so adjacency is an unambiguous error with no false-negative risk on valid input.
+function checkDoubleDot(tokens: IToken[]): ValidationMessage[] {
+  const messages: ValidationMessage[] = [];
+  for (let i = 1; i < tokens.length; i++) {
+    if (tokens[i].tokenType?.name === 'Dot' && tokens[i - 1].tokenType?.name === 'Dot') {
+      messages.push({
+        type: 'error',
+        message: 'Empty statement: two consecutive `.` separators',
+        startLine: tokens[i].startLine ?? 1,
+        startColumn: tokens[i].startColumn ?? 1,
+        endLine: tokens[i].endLine ?? tokens[i].startLine ?? 1,
+        endColumn: (tokens[i].endColumn ?? tokens[i].startColumn ?? 1) + 1,
+      });
+    }
+  }
+  return messages;
+}
+
 // Prefix diagnostics (undefined-prefix warnings, duplicate-prefix notices) run
 // off the token stream so they work even when the AST fails to build.
 function checkPrefixIssues(tokens: IToken[], prefixes: PrefixDeclaration[]): ValidationMessage[] {
@@ -396,6 +417,7 @@ export function validateSRL(
     if (lexResult.errors.length === 0 && parseResult.errors.length === 0) {
       const prefixes = extractPrefixes(parseResult.tokens);
       messages.push(...checkPrefixIssues(parseResult.tokens, prefixes));
+      messages.push(...checkDoubleDot(parseResult.tokens));
 
       // AST-based well-formedness + stratification. Guarded so a builder error
       // (e.g. an unsupported-but-parseable construct) degrades to a diagnostic
