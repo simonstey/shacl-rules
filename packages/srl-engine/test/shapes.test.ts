@@ -221,6 +221,26 @@ ex:BadColor ex:role ex:admin ; ex:color ex:blue .`;
   });
 });
 
+describe('checkConstraint: list family + language', () => {
+  const SH_PFX = '@prefix sh: <http://www.w3.org/ns/shacl#> .\n@prefix ex: <http://example.org/> .\n';
+
+  it('sh:maxListLength', () => {
+    const shapes = SH_PFX + `ex:S a sh:NodeShape ; sh:property [ sh:path ex:items ; sh:maxListLength 2 ] .`;
+    const data = `@prefix ex: <http://example.org/> .\nex:A ex:items ( ex:x ex:y ) . ex:B ex:items ( ex:x ex:y ex:z ) .`;
+    const { shape, dataStore, shapesStore } = dataAndShape(shapes, data, 'http://example.org/S');
+    expect(conforms(namedNode('http://example.org/A'), shape, dataStore, shapesStore)).toBe(true);
+    expect(conforms(namedNode('http://example.org/B'), shape, dataStore, shapesStore)).toBe(false);
+  });
+
+  it('sh:languageIn', () => {
+    const shapes = SH_PFX + `ex:S a sh:NodeShape ; sh:property [ sh:path ex:label ; sh:languageIn ( "en" "de" ) ] .`;
+    const data = `@prefix ex: <http://example.org/> .\nex:A ex:label "hi"@en . ex:B ex:label "salut"@fr .`;
+    const { shape, dataStore, shapesStore } = dataAndShape(shapes, data, 'http://example.org/S');
+    expect(conforms(namedNode('http://example.org/A'), shape, dataStore, shapesStore)).toBe(true);
+    expect(conforms(namedNode('http://example.org/B'), shape, dataStore, shapesStore)).toBe(false);
+  });
+});
+
 describe('checkConstraint: logical + shape-based + paths', () => {
   const SH_PFX = '@prefix sh: <http://www.w3.org/ns/shacl#> .\n@prefix ex: <http://example.org/> .\n';
 

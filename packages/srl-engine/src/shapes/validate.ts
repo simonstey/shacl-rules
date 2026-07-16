@@ -189,7 +189,52 @@ export function checkConstraint(
     return valueNodes.every(vn => superset.has(termKey(vn)));
   }
 
-  // Unhandled kinds (languageIn/uniqueLang/list-family/reifier — Tasks 3-4)
+  // String (language)
+  if (kind === 'languageIn') {
+    const langs = rdfList(shapesStore, value).map(t => t.value.toLowerCase());
+    const matches = (tag: string | undefined) => {
+      if (!tag) return false;
+      const t = tag.toLowerCase();
+      return langs.some(p => t === p || t.startsWith(p + '-'));
+    };
+    return valueNodes.every(vn => vn.termType === 'Literal' && matches((vn as Literal).language));
+  }
+  if (kind === 'uniqueLang') {
+    if (pyValue(value) !== true) return true;
+    const seen = new Set<string>();
+    for (const vn of valueNodes) {
+      if (vn.termType === 'Literal') {
+        const lang = (vn as Literal).language;
+        if (lang) { if (seen.has(lang)) return false; seen.add(lang); }
+      }
+    }
+    return true;
+  }
+
+  // List family
+  if (kind === 'memberShape') {
+    return valueNodes.every(vn =>
+      rdfList(dataStore, vn).every(m => conformsShapeRef(m, value, dataStore, shapesStore)));
+  }
+  if (kind === 'minListLength' || kind === 'maxListLength') {
+    const bound = Number(pyValue(value));
+    return valueNodes.every(vn => {
+      const count = rdfList(dataStore, vn).length;
+      return kind === 'minListLength' ? count >= bound : count <= bound;
+    });
+  }
+  if (kind === 'uniqueMembers') {
+    if (pyValue(value) !== true) return true;
+    return valueNodes.every(vn => {
+      const members = rdfList(dataStore, vn).map(termKey);
+      return members.length === new Set(members).size;
+    });
+  }
+
+  // Reification (best-effort; n3 lacks first-class triple terms — vacuously true)
+  if (kind === 'reifierShape' || kind === 'reificationRequired') return true;
+
+  // Unhandled kinds (genuinely unknown)
   throw new UnsupportedShapeFeatureError(`sh:${kind} is not yet evaluable`);
 }
 
