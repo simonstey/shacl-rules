@@ -115,3 +115,33 @@ RULE ex:r { ?s ex:q ?o } WHERE { ?s ex:p ?o }`);
     expect(rs.targetedRules).toHaveLength(0);
   });
 });
+
+import { loadShape, UnsupportedShapeFeatureError, TARGET_PREDS } from '../src/shapes/model';
+
+const SHAPES_TTL = `@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix ex: <http://example.org/> .
+ex:AdultShape a sh:NodeShape ; sh:targetClass ex:Person ;
+  sh:property [ sh:path ex:age ; sh:minCount 1 ; sh:minInclusive 18 ] .`;
+
+describe('loadShape', () => {
+  it('parses targets and property shapes', () => {
+    const store = storeFrom(SHAPES_TTL);
+    const shape = loadShape(store, namedNode('http://example.org/AdultShape'));
+    expect(shape.targets).toContainEqual(['targetClass', namedNode('http://example.org/Person')]);
+    expect(shape.propertyShapes).toHaveLength(1);
+    const ps = shape.propertyShapes[0];
+    expect(ps.path).toEqual(namedNode('http://example.org/age'));
+    expect(ps.constraints.map(c => c.kind).sort()).toEqual(['minCount', 'minInclusive']);
+  });
+
+  it('throws on an unsupported feature', () => {
+    const store = storeFrom(`@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix ex: <http://example.org/> .
+ex:S a sh:NodeShape ; sh:closed true .`);
+    expect(() => loadShape(store, namedNode('http://example.org/S'))).toThrow(UnsupportedShapeFeatureError);
+  });
+
+  it('exposes the target predicate set', () => {
+    expect(TARGET_PREDS.has('targetClass')).toBe(true);
+  });
+});
