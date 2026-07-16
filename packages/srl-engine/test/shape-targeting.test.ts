@@ -115,6 +115,25 @@ ex:Dana rdf:type ex:Person ; ex:bornYear 1980 .`;
 // validateSRL for targeted rules (Task 5.3)
 // ---------------------------------------------------------------------------
 
+describe('blast-radius isolation: bad targeted shape does not suppress plain-rule inference', () => {
+  it('a targeted rule with an unsupported shape does not suppress plain-rule inference', () => {
+    const shapes = `@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix ex: <http://example.org/> .
+ex:BadShape a sh:NodeShape ; sh:targetClass ex:Person ; sh:closed true .`;
+    const src = `PREFIX ex: <http://example.org/>
+RULE { ?x ex:flagged true } WHERE { ?x ex:role ex:admin }
+RULE ex:t FOR ?this IN ex:BadShape { ?this ex:status ex:x } WHERE { ?this ex:age ?a }`;
+    const data = `@prefix ex: <http://example.org/> .
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+ex:Alice rdf:type ex:Person ; ex:role ex:admin .`;
+    const rs = buildAST(src, { extensions: true });
+    const result = executeRules(rs, data, { extensions: true, shapesGraph: shapes });
+    const inferred = result.inferredTriples.map(t => t.quadString);
+    expect(inferred).toContain('<http://example.org/Alice> <http://example.org/flagged> "true"^^<http://www.w3.org/2001/XMLSchema#boolean>');
+    expect(result.errors.length).toBeGreaterThan(0);
+  });
+});
+
 describe('validateSRL for targeted rules', () => {
   it('reports a FOR clause as invalid when extensions are off', () => {
     const result = validateSRL(RULE_SRC);

@@ -242,6 +242,19 @@ describe('checkConstraint: list family + language', () => {
   });
 });
 
+describe('conforms: cyclic shapes graph guard', () => {
+  it('throws UnsupportedShapeFeatureError rather than stack-overflowing on cyclic sh:node', () => {
+    const shapesStore = storeFrom(`@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix ex: <http://example.org/> .
+ex:A a sh:NodeShape ; sh:node ex:B .
+ex:B a sh:NodeShape ; sh:node ex:A .`);
+    const dataStore = storeFrom(`@prefix ex: <http://example.org/> .\nex:Alice a ex:Person .`);
+    const shapeA = loadShape(shapesStore, namedNode('http://example.org/A'));
+    expect(() => conforms(namedNode('http://example.org/Alice'), shapeA, dataStore, shapesStore))
+      .toThrow(UnsupportedShapeFeatureError);
+  });
+});
+
 describe('checkConstraint: logical + shape-based + paths', () => {
   const SH_PFX = '@prefix sh: <http://www.w3.org/ns/shacl#> .\n@prefix ex: <http://example.org/> .\n';
 

@@ -395,8 +395,17 @@ export function stratifyRules(
     // any rule that could change its shape's conformance verdict).
     if (shapesStore) {
       for (let t = 0; t < m; t++) {
-        const shape = loadShape(shapesStore, termForShape(targetedRules[t].shape));
-        const refs = shapeReferencedPredicates(shape);
+        let refs: Set<string>;
+        try {
+          const shape = loadShape(shapesStore, termForShape(targetedRules[t].shape));
+          refs = shapeReferencedPredicates(shape);
+        } catch {
+          // Shape failed to load (e.g. unsupported SHACL feature). Skip this
+          // targeted rule's gate edges so valid plain-rule stratification still
+          // proceeds; the executor's applyTargetedRule will surface the load
+          // error per-rule into ExecutionResult.errors at evaluation time.
+          continue;
+        }
         if (!refs.size) continue;
         for (const { vertex: vj, rule: rj } of allVertices) {
           if (vj === n + t) continue;

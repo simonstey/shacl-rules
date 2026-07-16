@@ -53,8 +53,13 @@ function regexFlags(flags?: string): string {
 // Shape-ref recursion + path evaluation
 // ---------------------------------------------------------------------------
 
-function conformsShapeRef(node: Term, ref: Term, dataStore: Store, shapesStore: Store): boolean {
-  return conforms(node, loadShape(shapesStore, ref), dataStore, shapesStore);
+const MAX_CONFORMS_DEPTH = 50;
+
+function conformsShapeRef(node: Term, ref: Term, dataStore: Store, shapesStore: Store, depth = 0): boolean {
+  if (depth > MAX_CONFORMS_DEPTH) {
+    throw new UnsupportedShapeFeatureError('shape reference recursion too deep (possible cyclic shapes graph)');
+  }
+  return conforms(node, loadShape(shapesStore, ref), dataStore, shapesStore, depth + 1);
 }
 
 // SHACL RDF path → value nodes reachable from `node` (IRI / sh:inversePath / list-sequence).
@@ -98,6 +103,7 @@ export function checkConstraint(
   dataStore: Store,
   shapesStore: Store,
   flags?: string,
+  depth = 0,
 ): boolean {
   // Cardinality
   if (kind === 'minCount') return valueNodes.length >= Number(pyValue(value));
@@ -160,24 +166,24 @@ export function checkConstraint(
   }
 
   // Shape-based
-  if (kind === 'node') return valueNodes.every(vn => conformsShapeRef(vn, value, dataStore, shapesStore));
-  if (kind === 'someValue') return valueNodes.some(vn => conformsShapeRef(vn, value, dataStore, shapesStore));
+  if (kind === 'node') return valueNodes.every(vn => conformsShapeRef(vn, value, dataStore, shapesStore, depth));
+  if (kind === 'someValue') return valueNodes.some(vn => conformsShapeRef(vn, value, dataStore, shapesStore, depth));
 
   // Logical
   if (kind === 'and') {
     const andShapes = rdfList(shapesStore, value);
-    return valueNodes.every(vn => andShapes.every(s => conformsShapeRef(vn, s, dataStore, shapesStore)));
+    return valueNodes.every(vn => andShapes.every(s => conformsShapeRef(vn, s, dataStore, shapesStore, depth)));
   }
   if (kind === 'or') {
     const orShapes = rdfList(shapesStore, value);
-    return valueNodes.every(vn => orShapes.some(s => conformsShapeRef(vn, s, dataStore, shapesStore)));
+    return valueNodes.every(vn => orShapes.some(s => conformsShapeRef(vn, s, dataStore, shapesStore, depth)));
   }
   if (kind === 'xone') {
     const xoneShapes = rdfList(shapesStore, value);
-    return valueNodes.every(vn => xoneShapes.filter(s => conformsShapeRef(vn, s, dataStore, shapesStore)).length === 1);
+    return valueNodes.every(vn => xoneShapes.filter(s => conformsShapeRef(vn, s, dataStore, shapesStore, depth)).length === 1);
   }
   if (kind === 'not') {
-    return valueNodes.every(vn => !conformsShapeRef(vn, value, dataStore, shapesStore));
+    return valueNodes.every(vn => !conformsShapeRef(vn, value, dataStore, shapesStore, depth));
   }
 
   // 1.2 additions
@@ -214,7 +220,7 @@ export function checkConstraint(
   // List family
   if (kind === 'memberShape') {
     return valueNodes.every(vn =>
-      rdfList(dataStore, vn).every(m => conformsShapeRef(m, value, dataStore, shapesStore)));
+      rdfList(dataStore, vn).every(m => conformsShapeRef(m, value, dataStore, shapesStore, depth)));
   }
   if (kind === 'minListLength' || kind === 'maxListLength') {
     const bound = Number(pyValue(value));
@@ -238,12 +244,12 @@ export function checkConstraint(
   throw new UnsupportedShapeFeatureError(`sh:${kind} is not yet evaluable`);
 }
 
-function checkProperty(focusNode: Term, prop: PropertyShape, dataStore: Store, shapesStore: Store): boolean {
+function checkProperty(focusNode: Term, prop: PropertyShape, dataStore: Store, shapesStore: Store, depth = 0): boolean {
   const valueNodes = valueNodesOf(focusNode, prop.path, dataStore, shapesStore);
   const flags = prop.constraints.find(c => c.kind === 'flags')?.value.value;
   for (const c of prop.constraints) {
     if (c.kind === 'flags') continue;
-    if (!checkConstraint(c.kind, c.value, focusNode, valueNodes, dataStore, shapesStore, flags)) {
+    if (!checkConstraint(c.kind, c.value, focusNode, valueNodes, dataStore, shapesStore, flags, depth)) {
       return false;
     }
   }
@@ -255,17 +261,17 @@ export function valueNodesOf(node: Term, path: Term | null, dataStore: Store, sh
   return valueNodesViaPath(node, path, dataStore, shapesStore);
 }
 
-export function conforms(node: Term, shape: NodeShape, dataStore: Store, shapesStore: Store): boolean {
+export function conforms(node: Term, shape: NodeShape, dataStore: Store, shapesStore: Store, depth = 0): boolean {
   const nodeValues: Term[] = [node];
   const nodeFlags = shape.constraints.find(c => c.kind === 'flags')?.value.value;
   for (const c of shape.constraints) {
     if (c.kind === 'flags') continue;
-    if (!checkConstraint(c.kind, c.value, node, nodeValues, dataStore, shapesStore, nodeFlags)) {
+    if (!checkConstraint(c.kind, c.value, node, nodeValues, dataStore, shapesStore, nodeFlags, depth)) {
       return false;
     }
   }
   for (const prop of shape.propertyShapes) {
-    if (!checkProperty(node, prop, dataStore, shapesStore)) return false;
+    if (!checkProperty(node, prop, dataStore, shapesStore, depth)) return false;
   }
   return true;
 }
