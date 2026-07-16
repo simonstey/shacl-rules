@@ -9,6 +9,7 @@ import {
   TriplePattern,
   Expression,
   SourceLocation,
+  TargetedRule,
 } from '../srl/ast';
 import { expandDeclarations } from '../rules/executor';
 import { isStratifiable } from '../rules/stratifier';
@@ -285,8 +286,8 @@ function checkWellFormedSequence(
   return vPrev;
 }
 
-function checkRuleWellFormedness(rule: Rule, messages: ValidationMessage[]): void {
-  const vAll = checkWellFormedSequence(rule.body.elements, new Set(), messages);
+function checkRuleWellFormedness(rule: Rule, messages: ValidationMessage[], v0: Set<string> = new Set()): void {
+  const vAll = checkWellFormedSequence(rule.body.elements, v0, messages);
 
   const headVars = new Set<string>();
   for (const template of rule.head.patterns) {
@@ -308,6 +309,9 @@ function checkAstSemantics(ruleSet: RuleSet): ValidationMessage[] {
 
   for (const rule of ruleSet.rules) {
     checkRuleWellFormedness(rule, messages);
+  }
+  for (const tr of ruleSet.targetedRules) {
+    checkRuleWellFormedness(tr.rule, messages, new Set([tr.focusVar]));
   }
 
   // DATA blocks must be ground — no variables in any position.
@@ -332,7 +336,10 @@ function checkAstSemantics(ruleSet: RuleSet): ValidationMessage[] {
   return messages;
 }
 
-export function validateSRL(code: string): ValidationResult {
+export function validateSRL(
+  code: string,
+  options?: { extensions?: boolean; shapesGraph?: string; shapesStore?: import('n3').Store },
+): ValidationResult {
   const startTime = performance.now();
   const messages: ValidationMessage[] = [];
 
@@ -377,7 +384,7 @@ export function validateSRL(code: string): ValidationResult {
       // (e.g. an unsupported-but-parseable construct) degrades to a diagnostic
       // rather than crashing validation.
       try {
-        const ruleSet = buildAST(code);
+        const ruleSet = buildAST(code, { extensions: options?.extensions });
         messages.push(...checkAstSemantics(ruleSet));
       } catch (e) {
         messages.push({

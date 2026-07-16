@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { Store, Parser, DataFactory } from 'n3';
-import { buildAST, stratifyRules, executeRules } from '../src/index';
+import { buildAST, stratifyRules, executeRules, validateSRL } from '../src/index';
 import { loadShape } from '../src/shapes/model';
 import { shapeReferencedPredicates } from '../src/rules/stratifier';
 
@@ -108,5 +108,29 @@ ex:Dana rdf:type ex:Person ; ex:bornYear 1980 .`;
     const inferred = result.inferredTriples.map(t => t.quadString);
     expect(inferred).toContain('<http://example.org/Dana> <http://example.org/age> "40"^^<http://www.w3.org/2001/XMLSchema#integer>');
     expect(inferred).toContain('<http://example.org/Dana> <http://example.org/status> <http://example.org/adult>');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// validateSRL for targeted rules (Task 5.3)
+// ---------------------------------------------------------------------------
+
+describe('validateSRL for targeted rules', () => {
+  it('reports a FOR clause as invalid when extensions are off', () => {
+    const result = validateSRL(RULE_SRC);
+    expect(result.isValid).toBe(false);
+    expect(result.messages.some(m => /extension/i.test(m.message))).toBe(true);
+  });
+
+  it('accepts a targeted rule as valid when extensions are on (focus var bound)', () => {
+    const result = validateSRL(RULE_SRC, { extensions: true });
+    expect(result.isValid).toBe(true);
+  });
+
+  it('flags an unbound head variable in a targeted rule (focus var does not cover it)', () => {
+    const bad = `PREFIX ex: <http://example.org/>
+RULE ex:r FOR ?this IN ex:AdultShape { ?this ex:status ?missing } WHERE { ?this ex:age ?a }`;
+    const result = validateSRL(bad, { extensions: true });
+    expect(result.isValid).toBe(false);
   });
 });
