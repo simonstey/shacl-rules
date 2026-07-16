@@ -32,13 +32,18 @@ jobs:
         uses: actions/configure-pages@v5
 
       - name: Install dependencies
-        # `npm install`, not `npm ci`: the committed lockfile is generated on
-        # Windows and only records the win32 rollup native binary in its
-        # installed tree. `npm ci` reproduces that tree verbatim and never
-        # installs @rollup/rollup-linux-x64-gnu on the Linux runner, so tsup's
-        # rollup-based .d.ts build crashes (npm/cli#4828). `npm install` lets
-        # the runner resolve its own platform's optional binary.
-        run: npm install
+        # The committed lockfile is generated on Windows and only records the
+        # win32 rollup native binary in its installed tree — it has NO
+        # node_modules entry for @rollup/rollup-linux-x64-gnu. Both `npm ci` and
+        # `npm install` honor that tree, so the Linux runner never installs the
+        # binary and tsup's rollup-based .d.ts build crashes (npm/cli#4828).
+        # Removing the lockfile before install lets the runner resolve the
+        # correct optional binaries for its own platform. This is npm's own
+        # documented workaround; reproducibility loss is negligible on an
+        # ephemeral runner.
+        run: |
+          rm -f package-lock.json
+          npm install
 
       - name: Build engine
         run: npm -w srl-engine run build
