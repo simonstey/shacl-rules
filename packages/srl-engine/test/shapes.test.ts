@@ -220,3 +220,33 @@ ex:BadColor ex:role ex:admin ; ex:color ex:blue .`;
     expect(conforms(namedNode('http://example.org/BadColor'), shape, dataStore, shapesStore)).toBe(false);
   });
 });
+
+describe('checkConstraint: logical + shape-based + paths', () => {
+  const SH_PFX = '@prefix sh: <http://www.w3.org/ns/shacl#> .\n@prefix ex: <http://example.org/> .\n';
+
+  it('sh:not — node WITHOUT ex:banned conforms', () => {
+    const shapes = SH_PFX + `ex:S a sh:NodeShape ; sh:not ex:BannedShape .
+ex:BannedShape a sh:NodeShape ; sh:property [ sh:path ex:banned ; sh:minCount 1 ] .`;
+    const data = `@prefix ex: <http://example.org/> .\nex:Clean ex:ok true . ex:Bad ex:banned true .`;
+    const { shape, dataStore, shapesStore } = dataAndShape(shapes, data, 'http://example.org/S');
+    expect(conforms(namedNode('http://example.org/Clean'), shape, dataStore, shapesStore)).toBe(true);
+    expect(conforms(namedNode('http://example.org/Bad'), shape, dataStore, shapesStore)).toBe(false);
+  });
+
+  it('sh:inversePath — value nodes reached backwards', () => {
+    const shapes = SH_PFX + `ex:S a sh:NodeShape ; sh:property [ sh:path [ sh:inversePath ex:parent ] ; sh:minCount 1 ] .`;
+    const data = `@prefix ex: <http://example.org/> .\nex:Child ex:parent ex:Parent .`;
+    const { shape, dataStore, shapesStore } = dataAndShape(shapes, data, 'http://example.org/S');
+    expect(conforms(namedNode('http://example.org/Parent'), shape, dataStore, shapesStore)).toBe(true);
+    expect(conforms(namedNode('http://example.org/Child'), shape, dataStore, shapesStore)).toBe(false);
+  });
+
+  it('sh:or — conforms if any branch holds', () => {
+    const shapes = SH_PFX + `ex:S a sh:NodeShape ; sh:or ( ex:A ex:B ) .
+ex:A a sh:NodeShape ; sh:property [ sh:path ex:a ; sh:minCount 1 ] .
+ex:B a sh:NodeShape ; sh:property [ sh:path ex:b ; sh:minCount 1 ] .`;
+    const data = `@prefix ex: <http://example.org/> .\nex:X ex:b 1 .`;
+    const { shape, dataStore, shapesStore } = dataAndShape(shapes, data, 'http://example.org/S');
+    expect(conforms(namedNode('http://example.org/X'), shape, dataStore, shapesStore)).toBe(true);
+  });
+});

@@ -1,5 +1,5 @@
 import { Store, Term, Literal } from 'n3';
-import { NodeShape, PropertyShape, UnsupportedShapeFeatureError } from './model';
+import { NodeShape, PropertyShape, UnsupportedShapeFeatureError, loadShape } from './model';
 import { pyValue, rdfList, termKey, RDF_TYPE, RDFS_SUBCLASSOF, SH, XSD } from './rdf-helpers';
 
 // ---------------------------------------------------------------------------
@@ -47,6 +47,43 @@ function regexFlags(flags?: string): string {
   const map: Record<string, string> = { i: 'i', s: 's', m: 'm', x: '' };
   for (const ch of flags) if (map[ch] !== undefined) out += map[ch];
   return out;
+}
+
+// ---------------------------------------------------------------------------
+// Shape-ref recursion + path evaluation
+// ---------------------------------------------------------------------------
+
+function conformsShapeRef(node: Term, ref: Term, dataStore: Store, shapesStore: Store): boolean {
+  return conforms(node, loadShape(shapesStore, ref), dataStore, shapesStore);
+}
+
+// SHACL RDF path → value nodes reachable from `node` (IRI / sh:inversePath / list-sequence).
+function valueNodesViaPath(node: Term, path: Term, dataStore: Store, shapesStore: Store): Term[] {
+  if (path.termType === 'NamedNode') {
+    return dataStore.getQuads(node as never, path as never, null, null).map(q => q.object);
+  }
+  // sh:inversePath
+  const inv = shapesStore.getQuads(path as never, `${SH}inversePath` as never, null, null);
+  if (inv.length) {
+    const innerPath = inv[0].object;
+    if (innerPath.termType === 'NamedNode') {
+      return dataStore.getQuads(null, innerPath as never, node as never, null).map(q => q.subject);
+    }
+    // Nested inverse/sequence: support IRI inverse only for now.
+    throw new UnsupportedShapeFeatureError('Nested inverse SHACL paths are not supported');
+  }
+  // RDF-list sequence path
+  const members = rdfList(shapesStore, path);
+  if (members.length) {
+    let current: Term[] = [node];
+    for (const step of members) {
+      const next: Term[] = [];
+      for (const t of current) next.push(...valueNodesViaPath(t, step, dataStore, shapesStore));
+      current = next;
+    }
+    return current;
+  }
+  throw new UnsupportedShapeFeatureError(`Unsupported SHACL property path: ${path.value}`);
 }
 
 // ---------------------------------------------------------------------------
@@ -122,12 +159,42 @@ export function checkConstraint(
     return valueNodes.every(vn => vn.termType !== 'BlankNode' && re.test(vn.value));
   }
 
-  // Unhandled kinds (logical/shape-based/list — Tasks 3-4)
+  // Shape-based
+  if (kind === 'node') return valueNodes.every(vn => conformsShapeRef(vn, value, dataStore, shapesStore));
+  if (kind === 'someValue') return valueNodes.some(vn => conformsShapeRef(vn, value, dataStore, shapesStore));
+
+  // Logical
+  if (kind === 'and') {
+    const andShapes = rdfList(shapesStore, value);
+    return valueNodes.every(vn => andShapes.every(s => conformsShapeRef(vn, s, dataStore, shapesStore)));
+  }
+  if (kind === 'or') {
+    const orShapes = rdfList(shapesStore, value);
+    return valueNodes.every(vn => orShapes.some(s => conformsShapeRef(vn, s, dataStore, shapesStore)));
+  }
+  if (kind === 'xone') {
+    const xoneShapes = rdfList(shapesStore, value);
+    return valueNodes.every(vn => xoneShapes.filter(s => conformsShapeRef(vn, s, dataStore, shapesStore)).length === 1);
+  }
+  if (kind === 'not') {
+    return valueNodes.every(vn => !conformsShapeRef(vn, value, dataStore, shapesStore));
+  }
+
+  // 1.2 additions
+  if (kind === 'rootClass') {
+    return valueNodes.every(vn => subclassOf(vn, value, dataStore));
+  }
+  if (kind === 'subsetOf') {
+    const superset = new Set(valueNodesViaPath(focusNode, value, dataStore, shapesStore).map(termKey));
+    return valueNodes.every(vn => superset.has(termKey(vn)));
+  }
+
+  // Unhandled kinds (languageIn/uniqueLang/list-family/reifier — Tasks 3-4)
   throw new UnsupportedShapeFeatureError(`sh:${kind} is not yet evaluable`);
 }
 
 function checkProperty(focusNode: Term, prop: PropertyShape, dataStore: Store, shapesStore: Store): boolean {
-  const valueNodes = valueNodesOf(focusNode, prop.path, dataStore);
+  const valueNodes = valueNodesOf(focusNode, prop.path, dataStore, shapesStore);
   const flags = prop.constraints.find(c => c.kind === 'flags')?.value.value;
   for (const c of prop.constraints) {
     if (c.kind === 'flags') continue;
@@ -138,13 +205,9 @@ function checkProperty(focusNode: Term, prop: PropertyShape, dataStore: Store, s
   return true;
 }
 
-// Placeholder until path evaluation lands in Phase 3. Simple IRI path only.
-export function valueNodesOf(node: Term, path: Term | null, dataStore: Store): Term[] {
+export function valueNodesOf(node: Term, path: Term | null, dataStore: Store, shapesStore: Store): Term[] {
   if (path === null) return [];
-  if (path.termType === 'NamedNode') {
-    return dataStore.getQuads(node as never, path as never, null, null).map(q => q.object);
-  }
-  throw new UnsupportedShapeFeatureError('Complex SHACL property paths are not yet supported');
+  return valueNodesViaPath(node, path, dataStore, shapesStore);
 }
 
 export function conforms(node: Term, shape: NodeShape, dataStore: Store, shapesStore: Store): boolean {
