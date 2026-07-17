@@ -20,7 +20,7 @@
     "rules",
     "n3",
     "reasoner"
-  ]
+  ],
   "type": "module",
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
